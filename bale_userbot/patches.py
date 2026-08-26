@@ -22,6 +22,26 @@ instead, so the rest of the message still arrives.
 Sending is untouched — outgoing content is built by field name and never
 enters this code path with numeric keys.
 
+Beyond `MessageContent`, four more 1.0.9 defects are repaired here, each found
+by hitting it on a live account:
+
+* `Member.date` (field "3") is declared `Optional[int]`, but in a group's
+  `GetFullGroup` response that field carries the member's *display name*. One
+  member with a name kills the whole response — including the group title that
+  parsed fine. Channels return no member list, which is why only plain groups
+  came back nameless. The name is moved aside rather than discarded: see
+  `MEMBER_NAME_KEY`.
+* `CallableObject.call` inspects filter signatures with
+  `param.annotation.__name__`; any filter defined in a module using
+  `from __future__ import annotations` turns annotations into strings and the
+  dispatcher dies on the first incoming update.
+* `MessageResponse.add_message` requires `info.context` and `method_data`,
+  which the HTTP fallback in `session.post` never provides — so any request
+  made before the websocket is up crashes instead of returning a response.
+* One dialog whose last message has an exotic shape (a bot keyboard variant,
+  a document missing required fields) fails `PeerData` validation and takes
+  the whole `LoadDialogs` page with it, silently truncating the chat list.
+
 Swapping the function inside `__pydantic_decorators__` and forcing a schema
 rebuild is the only way in: pydantic compiled the original into the model's
 core schema at class-creation time. Models that embed `MessageContent` are
@@ -31,11 +51,14 @@ bale-userbot was imported.
 
 from __future__ import annotations
 
+import logging
 from copy import deepcopy
 from types import MethodType
 from typing import Any
 
 from baleclient.types import MessageContent
+
+logger = logging.getLogger(__name__)
 
 _APPLIED = False
 
@@ -99,6 +122,147 @@ def _drop_unbuildable_blocks(cls: type, data: Any) -> Any:
     return data
 
 
+_INT_MEMBER_FIELDS = ("2", "3", "5", "6")
+
+#: Where a display name found in the join-date field is kept. `Member` allows
+#: extra fields, so it survives as `member.display_name`.
+MEMBER_NAME_KEY = "display_name"
+
+
+def _fixed_member_fields(cls: type, data: Any) -> Any:
+    """`Member.fix_fields`, plus: move non-numeric values out of int fields.
+
+    In a group's `GetFullGroup` response, field "3" — declared as the join
+    date — carries the member's display name. `Optional[int]` then rejects the
+    member, pydantic rejects the response, and the group title is lost with it.
+
+    The value has to leave field "3" for the member to parse at all, but a name
+    is worth keeping: put aside under `MEMBER_NAME_KEY` it saves a `LoadUsers`
+    round trip for every member that carries one. Anything else non-numeric is
+    dropped, as before.
+    """
+    if not isinstance(data, dict):
+        return data
+
+    for key in list(data.keys()):
+        value = data[key]
+        if isinstance(value, dict) and len(value) == 1 and "1" in value:
+            data[key] = value["1"]
+        elif not value:
+            data.pop(key)
+
+    if "7" in data and not isinstance(data["7"], list):
+        data["7"] = [data["7"]]
+
+    for key in _INT_MEMBER_FIELDS:
+        if key in data and not isinstance(data[key], int):
+            value = data.pop(key)
+            if key == "3" and isinstance(value, str) and value.strip():
+                data[MEMBER_NAME_KEY] = value
+
+    return data
+
+
+async def _fixed_callable_call(self, *args: Any, **kwargs: Any) -> Any:
+    """`CallableObject.call` without the `param.annotation.__name__` crash.
+
+    The original assumes every annotation is a class. A filter defined in a
+    module using `from __future__ import annotations` has *string* annotations,
+    and the dispatcher then dies on the first incoming update. `getattr` keeps
+    the original behaviour for real classes and simply skips the rest.
+    """
+    import asyncio as _asyncio
+    import contextvars as _contextvars
+    import inspect as _inspect
+    from functools import partial as _partial
+
+    callback = _inspect.unwrap(self.callback)
+    sig = _inspect.signature(callback)
+    filtered_kwargs = {}
+
+    for name, param in sig.parameters.items():
+        if name in kwargs:
+            filtered_kwargs[name] = kwargs[name]
+        elif (
+            getattr(param.annotation, "__name__", param.annotation) == "Client"
+            and "client" in kwargs
+        ):
+            filtered_kwargs[name] = kwargs["client"]
+
+    wrapped = _partial(callback, *args, **filtered_kwargs)
+    if self.awaitable:
+        return await wrapped()
+
+    loop = _asyncio.get_event_loop()
+    context = _contextvars.copy_context()
+    wrapped = _partial(context.run, wrapped)
+    return await loop.run_in_executor(None, wrapped)
+
+
+def _make_fixed_add_message(original):
+    """Wrap `MessageResponse.add_message` to survive the HTTP fallback.
+
+    `session.post` validates responses without a context and without
+    `method_data`; the original validator dereferences both and crashes. With
+    neither there is nothing to reconstruct the echoed message from, so the
+    optional `message` field is simply left empty.
+    """
+
+    def _fixed_add_message(cls: type, data: Any, info: Any) -> Any:
+        if not isinstance(data, dict) or "message" in data:
+            return data
+        if info.context is None or data.get("method_data") is None:
+            data["message"] = None
+            return data
+        return original(data, info)
+
+    return _fixed_add_message
+
+
+def _make_lenient_dialogs(cls: type):
+    """A before-validator for `DialogResponse` that saves what it can.
+
+    Every entry is trial-validated. An entry that fails is retried with its
+    last-message content (field "7") replaced by an empty `MessageContent` —
+    the content is only a chat-list preview, while the peer id and sort date
+    are what callers actually need. Only an entry that still fails is dropped,
+    and loudly.
+    """
+    from baleclient.types import PeerData
+
+    def _lenient(cls_: type, data: Any) -> Any:
+        if not isinstance(data, dict) or "3" not in data:
+            return data
+        entries = data["3"] if isinstance(data["3"], list) else [data["3"]]
+
+        kept = []
+        for entry in entries:
+            try:
+                PeerData.model_validate(entry)
+            except Exception:
+                stripped = dict(entry) if isinstance(entry, dict) else entry
+                if isinstance(stripped, dict):
+                    stripped["7"] = {}
+                    try:
+                        PeerData.model_validate(stripped)
+                    except Exception:
+                        logger.warning(
+                            "dropping unparseable dialog entry for peer %r",
+                            entry.get("1") if isinstance(entry, dict) else entry,
+                        )
+                        continue
+                    kept.append(stripped)
+                    continue
+                logger.warning("dropping unparseable dialog entry %r", entry)
+                continue
+            kept.append(entry)
+
+        data["3"] = kept
+        return data
+
+    return _lenient
+
+
 def apply_wire_fixes() -> None:
     """Install the fixed validator. Idempotent; call before any parsing."""
     global _APPLIED
@@ -116,6 +280,38 @@ def apply_wire_fixes() -> None:
     validators[_DROP_NAME] = decorator
 
     MessageContent.model_rebuild(force=True)
+
+    # -- Member: display-name string in an int field (GetFullGroup) --------
+    from baleclient.types import Member
+
+    member_validators = Member.__pydantic_decorators__.model_validators
+    member_validators["fix_fields"].func = MethodType(_fixed_member_fields, Member)
+    Member.model_rebuild(force=True)
+
+    # -- dispatcher: string annotations from postponed evaluation ----------
+    from baleclient.dispatcher.event.handler import CallableObject
+
+    CallableObject.call = _fixed_callable_call
+
+    # -- MessageResponse: HTTP fallback has no context ---------------------
+    from baleclient.types.responses import MessageResponse
+
+    response_validators = MessageResponse.__pydantic_decorators__.model_validators
+    original_add = response_validators["add_message"].func
+    response_validators["add_message"].func = MethodType(
+        _make_fixed_add_message(original_add), MessageResponse
+    )
+    MessageResponse.model_rebuild(force=True)
+
+    # -- DialogResponse: one exotic dialog kills the page ------------------
+    from baleclient.types.responses import DialogResponse
+
+    dialog_validators = DialogResponse.__pydantic_decorators__.model_validators
+    lenient = deepcopy(dialog_validators["validate_list"])
+    lenient.cls_var_name = "_bale_userbot_lenient_dialogs"
+    lenient.func = MethodType(_make_lenient_dialogs(DialogResponse), DialogResponse)
+    dialog_validators["_bale_userbot_lenient_dialogs"] = lenient
+    DialogResponse.model_rebuild(force=True)
 
     # Any model whose already-built schema embeds the old MessageContent
     # schema must be rebuilt as well. Failures are fine: a model that cannot

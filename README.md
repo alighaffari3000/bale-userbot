@@ -41,6 +41,16 @@ app.run()                                        # اتصال، هندشیک، r
 | `set_reaction`/`remove_reaction`/`typing`/`stop_typing` با `Peer(type=chat_type)` خام ساخته می‌شوند، ولی `PeerType` فقط 0/1/2 دارد | ری‌اکشن یا «در حال تایپ» در ربات، سوپرگروه و کانال، *قبل از هر درخواست شبکه*، ValidationError می‌دهد | `react()` / `unreact()` / `set_typing()` peer را مثل بقیهٔ کتابخانه resolve می‌کنند |
 | دیسپچر با `inspect.iscoroutinefunction` تصمیم می‌گیرد | هندلری که یک شیء صدازدنی است (نه تابع) داخل thread executor بدون await رها می‌شود | `wrap_handler` همیشه یک coroutine function ثبت می‌کند |
 | آپدیت‌ها با `asyncio.create_task` پرتاب می‌شوند | استثنای هندلر همراه task بی‌صدا گم می‌شود | `wrap_handler` لاگ می‌کند و اختیاری `on_error` صدا می‌زند |
+| در پاسخ `GetFullGroup` گروه‌ها، فیلد `3` هر عضو **نام نمایشی** (رشته) است ولی `Member.date` آن را `int` اعلام کرده | یک عضو اسم‌دار کل پاسخ را رد می‌کند — عنوان گروه هم با آن گم می‌شود؛ کانال‌ها (بدون لیست عضو) سالم‌اند | همان پچ مقدار را از فیلد `3` بیرون می‌برد ولی نامش را در `member.display_name` نگه می‌دارد؛ `MemberInfo.name` رایگان پر می‌شود |
+| `CallableObject.call` امضای فیلتر را با `param.annotation.__name__` می‌خواند | هر فیلتری در ماژولی با `from __future__ import annotations` دیسپچر را روی اولین آپدیت می‌ترکاند | همان پچ، متد را با نسخهٔ `getattr`دار عوض می‌کند |
+| مسیر HTTP در `session.post` نه `method_data` می‌دهد نه `context` — ولی `MessageResponse.add_message` هر دو را لازم دارد | هر ارسالی قبل از بالا آمدن وب‌سوکت (مثلاً داخل lifespan) `AttributeError` می‌دهد | همان پچ؛ بدون context پیام echo قابل بازسازی نیست، `message=None` برمی‌گردد |
+| یک دیالوگ با پیام آخرِ بدشکل (کیبورد بات، سند ناقص) اعتبارسنجی `PeerData` را می‌ترکاند | **کل صفحهٔ `LoadDialogs`** می‌سوزد و فهرست چت بی‌صدا کوتاه می‌شود | همان پچ: هر دیالوگ جدا آزموده می‌شود؛ محتوای بدشکل حذف و peer حفظ می‌شود |
+| `Client.load_members` وقتی offset نداری `StringValue(value="None")` می‌فرستد — رشتهٔ «None» به‌عنوان کِرسر | همان صفحهٔ اول هم با کِرسرِ بی‌معنی خواسته می‌شود | `groups.iter_members` مستقیم `LoadMembers` را صدا می‌زند و وقتی offset نیست فیلد را اصلاً نمی‌فرستد |
+| `MembersResponse` فقط لیست اعضا را مدل کرده و کِرسرِ صفحهٔ بعد را دور می‌ریزد | صفحه‌بندی اعضا از بیرون غیرممکن است | کِرسر از `model_extra` خوانده می‌شود؛ نبودش یعنی آخرین id، و صفحهٔ تکراری سوییپ را تمام می‌کند (نه حلقهٔ بی‌پایان) |
+| `get_full_group` برای گروهی که نمی‌بینی `None` برمی‌گرداند، نه خطا | `AttributeError` یک خط بعد، بدون اینکه بدانی چرا | `get_group` با `GroupUnavailableError` صریح می‌ترکد |
+| `Permissions()` هر بیست پرچمش پیش‌فرض `False` است و `set_member_permissions` همان را عیناً می‌فرستد | «فقط ارسال مدیا را ببند» در عمل **همهٔ اختیارات عضو را می‌گیرد** | `restrict`/`allow` اول دسترسی فعلی را می‌خوانند و فقط پرچم نام‌برده را عوض می‌کنند |
+| `GetPinsResponse` روی هر پیام پین‌شده `ChatType.GROUP` می‌چسباند | پین‌های کانال/سوپرگروه با نوع peer اشتباه برمی‌گردند و ریپلای/ری‌اکشن رویشان کار نمی‌کند | `pins()` نوع واقعی چت را می‌گیرد و برمی‌گرداند |
+| `LoadHistory` offset را تایم‌استمپ می‌گیرد نه message id، و کتابخانه صفحه‌بندی ندارد | پیام‌های هم‌میلی‌ثانیه بریده می‌شوند یا (با offsetِ inclusive) پیمایش بعد از یک صفحه می‌ایستد | `iter_history` اول صفحه را بزرگ می‌کند، بعد offset را یک میلی‌ثانیه عقب می‌برد |
 
 به‌علاوهٔ چیزی که اصلاً وجود ندارد: **یک واژگان واحد برای «این پیام چیست؟»**.
 در پروتکل بله عکس، ویدئو، ویس، موزیک، گیف و فایل ساده همگی یک `DocumentMessage`
@@ -100,6 +110,23 @@ python -m bale_userbot whoami --offline     # بدون اتصال؛ فقط آی�
 
 از این به بعد نشست از فایل خوانده می‌شود و OTP لازم نیست.
 
+## خط فرمان (بدون نوشتن کد)
+
+```bash
+python -m bale_userbot groups                          # گروه/کانال‌های این اکانت
+python -m bale_userbot members 12345                   # اعضا + نام و یوزرنیم
+python -m bale_userbot members 12345 --admins          # فقط ادمین‌ها
+python -m bale_userbot members 12345 --json > m.json   # ردیف‌های خام
+python -m bale_userbot history 12345 --since 2026-04-26 --until 2026-04-28
+python -m bale_userbot history 12345 --chat-type channel --limit 500 --json
+python -m bale_userbot pins 12345
+python -m bale_userbot link 12345 [--revoke]
+```
+
+`--json` همان ردیف‌هایی را می‌دهد که `export_members`/`export_history`
+برمی‌گردانند. لاگ‌های این دستورها روی stderr می‌روند تا خروجی JSON روی stdout
+قابل pipe کردن بماند.
+
 ---
 
 ## API
@@ -115,8 +142,9 @@ async def on_text(message, client): ...
 @app.on_message(IsMedia(), FromUsers(123, 456))     # فیلترهای دلخواه
 async def on_media(message, client): ...
 
-app.run()            # مسدودکننده
-await app.start()    # داخل event loop خودت
+app.run()                            # مسدودکننده
+await app.start()                    # داخل event loop خودت
+await app.start(background=True)     # فقط وصل شو و برگرد — برای اسکریپت یک‌باره
 ```
 
 گیت‌های سطح config (خصوصی/گروه، allowlist، پیام‌های خودت) قبل از فیلترهای تو
@@ -181,6 +209,157 @@ await app.typing(chat_id, stop=True)
 دلخواهی را می‌فرستد — برای وقتی که بله نوع تازه‌ای اضافه کرد و نخواستی
 منتظر bale-userbot بمانی.
 
+**گروه‌ها و اعضا:**
+
+```python
+count  = await app.member_count(chat_id)          # فقط تعداد — یک درخواست
+group  = await app.group(chat_id)                 # GroupInfo: عنوان، مالک، نوع، تعداد
+members = await app.members(chat_id)              # همهٔ اعضا (id و نقش)
+members = await app.members(chat_id, profiles=True)   # + نام و یوزرنیم
+admins  = await app.admins(chat_id)               # ادمین‌ها و مالک (فیلتر سمت سرور)
+groups  = await app.groups()                      # همهٔ گروه/کانال‌های این اکانت
+
+async for m in app.iter_members(chat_id):         # گروه بزرگ، بدون بارِ حافظه
+    ...
+
+members = await app.hydrate_profiles(old_snapshot)  # اسنپ‌شات ذخیره‌شده را نام‌دار کن
+```
+
+`GroupInfo`: `id`, `title`, `members_count`, `chat_type`, `access_hash`,
+`username`, `about`, `owner_id`, `created_at`, `is_joined`,
+`available_reactions`, `default_permissions`, `known_members` +
+`is_channel` / `is_public`.
+
+`MemberInfo`: `user_id`, `chat_id`, `is_admin`, `is_owner`, `inviter_id`,
+`joined_at`, `promoted_by`, `promoted_at` و — پس از hydrate — `name`,
+`local_name`, `username`, `access_hash`, `is_bot`, `is_deleted`,
+`account_created_at`, `profile_loaded`.
+
+`profile_loaded` عمداً وجود دارد: بدون آن نمی‌شود فهمید «این عضو یوزرنیم
+ندارد» یا «اصلاً نپرسیده‌ایم».
+
+`name` تنها استثناست: سرور در لیست اعضای خودِ گروه گاهی نام نمایشی را
+می‌فرستد (در فیلدی که `Member.date` اعلام شده)، و پچ آن را نگه می‌دارد. پس
+ممکن است `name` پر باشد ولی `profile_loaded` هنوز `False` — یعنی اسم داریم و
+بقیهٔ پروفایل نه. اگر بعداً `profiles=True` بزنی، پروفایلِ واقعی جایش را
+می‌گیرد. برای اینکه ببینی روی اکانت تو چقدر رایگان درمی‌آید:
+`python -m bale_userbot members <chat_id> --no-profiles`.
+
+`members_count` همیشه عدد کاملِ گروه است — حتی در کانالی که پیمایش صفحه‌به‌صفحه
+هرگز به همهٔ اعضایش نمی‌رسد. `chat_type` هم فقط از `ex_info` درمی‌آید: در پاسخ
+سرور، سوپرگروه و گروه ساده `group_type` یکسانی دارند و هر `send_*` به تفکیک
+درست نیاز دارد.
+
+**ذخیره‌سازی — مرز کار ما:** `export_members` داده می‌دهد، نه فایل.
+
+```python
+group, rows = await app.export_members(chat_id)   # rows: list[dict] تخت و JSON-پذیر
+json.dump(rows, open("members.json", "w"))        # کار برنامهٔ تو
+db.executemany("INSERT …", rows)                  #     ← نه کار زیرساخت
+```
+
+هر ردیف `member.as_dict()` است به‌علاوهٔ `group_id`/`group_title`/
+`group_username`. `member_records(members, group)` هم مستقیم در دسترس است.
+نمونهٔ کامل (JSON + SQLite): `examples/export_members.py`.
+
+**رصد تغییرات عضویت:**
+
+```python
+changes, current = await app.watch_membership(chat_id, previous_snapshot)
+if changes:                              # False وقتی هیچ چیز عوض نشده
+    changes.joined, changes.left, changes.promoted, changes.demoted, changes.renamed
+```
+
+`diff_members(before, after)` تابع خالص است — هیچ درخواستی نمی‌زند — پس
+می‌توانی اسنپ‌شات دیشب را از هرجا که ذخیره کرده‌ای بخوانی و مقایسه کنی.
+`watch_membership` علاوه بر تغییرات، اسنپ‌شات جدید را هم برمی‌گرداند، چون
+باید ذخیره‌اش کنی تا دفعهٔ بعد مبنای مقایسه باشد. تغییر نام فقط وقتی گزارش
+می‌شود که هر دو اسنپ‌شات `profiles=True` داشته باشند، وگرنه همهٔ اعضا
+«تغییرنام‌داده» به نظر می‌رسند. نمونه: `examples/watch_membership.py`.
+
+---
+
+### آرشیو پیام‌ها (با بازهٔ زمانی)
+
+```python
+from datetime import date, datetime
+
+msgs = await app.history(chat_id, ChatType.GROUP,
+                         since=date(2026, 4, 26), until=date(2026, 4, 28))
+msgs = await app.history(chat_id, ChatType.GROUP,
+                         since="2026-04-26", until="2026-04-28T18:00")
+rows = await app.export_history(chat_id, ChatType.GROUP, since="2026-04-26")
+
+async for m in app.iter_history(chat_id, ChatType.GROUP, limit=1000):
+    ...                                   # از جدید به قدیم، بدون بارِ حافظه
+```
+
+`since`/`until` هر چیزی را قبول می‌کنند: `date`، `datetime`، رشتهٔ ISO، یا
+تایم‌استمپ میلی‌ثانیه‌ای خود بله. **تاریخ خالی یعنی تمام آن روز** — پس
+`until=date(2026, 4, 28)` تا آخرین میلی‌ثانیهٔ ۲۸ام را می‌گیرد، نه تا نیمه‌شبِ
+اولش. `datetime` بدون timezone به وقت **محلی** خوانده می‌شود، چون کسی که
+«۲۶ ساعت ۹ صبح» می‌نویسد ساعت ۹ همان‌جا را می‌خواهد نه UTC.
+
+`app.history()` به‌ترتیب زمانی (قدیم→جدید) برمی‌گرداند؛ `oldest_first=False`
+عکسش. `export_history` همان ردیف‌های تخت `describe()` را می‌دهد.
+
+صفحه‌بندی `LoadHistory` فقط یک تایم‌استمپ به‌عنوان offset دارد، نه message id.
+دو تلهٔ ناشی از همین، این‌جا هندل شده‌اند و هر دو از بیرون یک شکل دارند —
+صفحه‌ای که هیچ پیام جدیدی ندارد: یا سرور offset را **شامل** حساب کرده (یک
+میلی‌ثانیه عقب می‌رویم)، یا پیام‌های هم‌میلی‌ثانیه بیشتر از ظرفیت صفحه‌اند
+(صفحه را بزرگ‌تر می‌خواهیم). اول بزرگ‌کردن، بعد عقب‌رفتن — وگرنه یک رگبار پیام
+که در یک میلی‌ثانیه فرستاده شده بی‌صدا بریده می‌شود.
+
+---
+
+### مدیریت گروه
+
+```python
+await app.kick(chat_id, user_id)
+await app.unban(chat_id, user_id)
+ids = await app.banned(chat_id)
+
+await app.promote(chat_id, user_id, title="ناظر", delete_message=True)
+await app.demote(chat_id, user_id)
+
+await app.restrict(chat_id, user_id, "send_media")      # فقط همین یکی خاموش
+await app.allow(chat_id, user_id, "pin_message")        # فقط همین یکی روشن
+await app.mute(chat_id, user_id)                        # همهٔ راه‌های حرف‌زدن
+await app.unmute(chat_id, user_id)
+perms = await app.permissions_of(chat_id, user_id)
+
+await app.set_permissions(chat_id, user_id, send_message=False, pin_message=True)
+await app.set_default_permissions(chat_id, send_media=False)   # پیش‌فرضِ کل گروه
+```
+
+**چرا این لایه لازم است:** `Permissions()` هر بیست پرچمش پیش‌فرض `False` است.
+یعنی `set_member_permissions(chat, user, Permissions(send_message=False))` کسی
+را ساکت نمی‌کند — **همهٔ اختیاراتش را می‌گیرد**. `restrict`/`allow` اول
+دسترسی فعلی را می‌خوانند و فقط پرچم‌هایی را که اسم برده‌ای عوض می‌کنند. اسم
+اشتباه هم *قبل از* هر درخواستی `ValueError` می‌دهد. فهرست کامل در
+`PERMISSION_FLAGS`.
+
+بله متد جداگانه‌ای برای «بن» ندارد: حذف عضو همان `kick()` است و سرور فهرستی
+نگه می‌دارد که با `banned()` می‌خوانی و با `unban()` پاک می‌کنی.
+
+`promote` عمداً دو کار را یکجا می‌کند: در بله ادمین‌کردن هیچ اختیاری نمی‌دهد و
+باید بلافاصله پرمیشن ست شود.
+
+**پین و لینک دعوت:**
+
+```python
+pinned = await app.pins(chat_id)          # با chat_type درست (نه GROUP همیشگی)
+await app.pin(chat_id, message)
+await app.unpin(chat_id, message)
+await app.unpin_all(chat_id)
+
+link = await app.invite_link(chat_id)              # link.url
+link = await app.invite_link(chat_id, revoke=True) # لینک قبلی می‌سوزد
+info = await app.preview("https://ble.ir/join/…")  # قبل از عضو شدن
+await app.join("https://ble.ir/join/…")
+await app.leave(chat_id)
+```
+
 **فیلترها:** `Kind(...)`, `IsMedia()`, `NotSelf()`, `FromUsers(...)`,
 `InChats(...)`, `ChatScope(private=, groups=)` — کنار فیلترهای خود
 `baleclient.filters` و `F` قابل استفاده‌اند.
@@ -201,13 +380,15 @@ await app.typing(chat_id, stop=True)
 - `examples/echo_any.py` — هر چیزی که آمد را برمی‌گرداند (مدیا بدون آپلود مجدد)
 - `examples/inspect_messages.py` — چاپ یک‌خطی هر پیام ورودی
 - `examples/download_media.py` — ذخیرهٔ هر فایل دریافتی
+- `examples/export_members.py` — استخراج اعضای یک گروه در JSON و SQLite
+- `examples/watch_membership.py` — گزارش آمد و رفت اعضا بین دو اجرا
 
 ---
 
 ## تست
 
 ```bash
-python -m pytest tests -q      # 155 تست، بدون شبکه و بدون اکانت
+python -m pytest tests -q      # 267 تست، بدون شبکه و بدون اکانت
 ```
 
 تست‌ها با اشیای واقعی `baleclient.types` ساخته می‌شوند (نه mock پروتکل): هر شکل
