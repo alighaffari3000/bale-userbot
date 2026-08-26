@@ -1,0 +1,24 @@
+[project]
+name = "bale-ai-userbot"
+version = "0.1.0"
+description = "Minimal AI chatbot that runs on a personal Bale account via BaleClient"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "BaleClient==1.0.9",
+    "google-genai>=1.20,<3.0",
+    "python-dotenv>=1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+]
+
+[tool.pytest.ini_options]
+pythonpath = "."
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
