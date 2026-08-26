@@ -283,17 +283,17 @@ async def member_count(client: Client, chat_id: int) -> int:
 def _offset_from(response: MembersResponse) -> str | None:
     """Read the pagination cursor `MembersResponse` forgets to model.
 
-    Anything the server sent beyond the member list lands in `model_extra`.
-    A cursor arrives either bare or wrapped as a `StringValue` (`{"1": ...}`).
+    Anything the server sent beyond the member list lands in `model_extra`,
+    and the cursor arrives either bare or wrapped as a `StringValue`
+    (`{"1": ...}`). Only strings count: `next_offset` is a `StringValue` on
+    the wire, and taking the first *number* in `model_extra` would happily
+    mistake a total-count field for a cursor and page from the wrong place.
     """
     for value in (response.model_extra or {}).values():
         if isinstance(value, dict):
             value = value.get("1")
-        if isinstance(value, bool) or not isinstance(value, (str, int)):
-            continue
-        text = str(value)
-        if text:
-            return text
+        if isinstance(value, str) and value:
+            return value
     return None
 
 

@@ -70,12 +70,16 @@ def to_timestamp(value: TimeLike | None, *, end_of_day: bool = False) -> int | N
         return int(value)
 
     if isinstance(value, str):
+        # Whether a time was *written* is the question, not whether it is
+        # midnight: "2026-04-26T00:00" asks for that instant, while
+        # "2026-04-26" asks for the day — and fromisoformat returns the same
+        # datetime for both.
+        dated_only = not any(mark in value.strip() for mark in ("T", " ", ":"))
         try:
             value = datetime.fromisoformat(value)
         except ValueError as exc:
             raise ValueError(f"cannot read {value!r} as a date or datetime") from exc
-        # fromisoformat keeps a date-only string as midnight; treat it as a day.
-        if end_of_day and value.time() == time.min:
+        if dated_only:
             value = value.date()
 
     if isinstance(value, datetime):

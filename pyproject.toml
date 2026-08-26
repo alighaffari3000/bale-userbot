@@ -1,6 +1,6 @@
 [project]
 name = "bale-userbot"
-version = "0.4.0"
+version = "1.0.0"
 description = "Infrastructure layer for building on a personal Bale account with BaleClient"
 requires-python = ">=3.11,<3.14"
 dependencies = [

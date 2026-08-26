@@ -455,3 +455,19 @@ async def test_profiles_can_be_filled_in_later_from_the_app():
     app._client = FakeClient(users=[user(1, name="Ali")])
     (only,) = await app.hydrate_profiles([member_info(member(1), GROUP_ID)])
     assert only.name == "Ali" and only.profile_loaded is True
+
+
+@pytest.mark.asyncio
+async def test_a_numeric_extra_is_not_mistaken_for_a_cursor():
+    # A total-count field alongside the members would otherwise be sent back
+    # as next_offset, paging from a position the server never named.
+    class Counting(FakeClient):
+        async def __call__(self, call):
+            result = await super().__call__(call)
+            if isinstance(call, LoadMembers):
+                result.total = 500
+            return result
+
+    client = Counting(pages=[([member(1), member(2)], None), ([member(3)], None)])
+    await load_members(client, GROUP_ID, page_size=2)
+    assert load_members_calls(client)[1].next_offset.value == "2"

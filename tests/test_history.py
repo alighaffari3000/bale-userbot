@@ -226,3 +226,36 @@ async def test_export_returns_json_serializable_rows():
     assert row["kind"] == "text"
     assert row["text"] == "m1"
     assert row["chat_type"] == int(ChatType.PRIVATE)
+
+
+def test_an_explicit_midnight_is_not_stretched_to_a_whole_day():
+    # "2026-04-26" asks for the day; "2026-04-26T00:00" asks for that instant.
+    # fromisoformat returns the same datetime for both, so the string has to
+    # be inspected before it is parsed.
+    assert to_timestamp("2026-04-26T00:00", end_of_day=True) == to_timestamp(
+        datetime(2026, 4, 26, 0, 0)
+    )
+    assert to_timestamp("2026-04-26", end_of_day=True) > to_timestamp(
+        "2026-04-26T00:00", end_of_day=True
+    )
+
+
+@pytest.mark.asyncio
+async def test_rich_message_kinds_survive_the_record_round_trip():
+    # asdict() has to reach MediaInfo, StickerInfo and the rest; a dataclass
+    # that slipped in as a non-serializable object would only show up here.
+    import json
+
+    archive = []
+    for index, content in enumerate(
+        [f.photo(caption="cap"), f.voice(), f.sticker_content(), f.gift_content()], 1
+    ):
+        message = f.message(content, message_id=index)
+        message.date = int(local(2026, 4, 26, 10 + index).timestamp() * 1000)
+        archive.append(message)
+
+    rows = await export_history(FakeClient(archive), CHAT_ID, ChatType.GROUP)
+    parsed = json.loads(json.dumps(rows, ensure_ascii=False))
+    assert [r["kind"] for r in parsed] == ["photo", "voice", "sticker", "gift"]
+    assert parsed[0]["media"]["mime_type"] == "image/jpeg"
+    assert parsed[2]["sticker"]["image512"]["file_id"]

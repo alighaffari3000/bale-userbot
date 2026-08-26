@@ -388,7 +388,7 @@ await app.leave(chat_id)
 ## تست
 
 ```bash
-python -m pytest tests -q      # 264 تست، بدون شبکه و بدون اکانت
+python -m pytest tests -q      # 267 تست، بدون شبکه و بدون اکانت
 ```
 
 تست‌ها با اشیای واقعی `baleclient.types` ساخته می‌شوند (نه mock پروتکل): هر شکل

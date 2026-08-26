@@ -113,7 +113,7 @@ from .routing import (  # noqa: E402
     wrap_handler,
 )
 
-__version__ = "0.4.0"
+__version__ = "1.0.0"
 
 __all__ = (
     "BaleApp",
