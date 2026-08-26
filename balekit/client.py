@@ -1,10 +1,9 @@
-"""Thin Client subclass that fixes self-message bookkeeping.
+"""Client subclass that fixes self-message bookkeeping.
 
 `baleclient.Client._should_ignore` (1.0.9) calls `list.remove()` with no
-argument, which raises `TypeError` for every echo of a message we sent, and it
-returns `True` for every non-message event. The override below keeps the same
-intent — drop the server echo of our own outgoing messages — without the crash,
-and caps the pending-id list so a long-running process cannot grow it forever.
+argument, so every echo of a message we sent raises `TypeError` inside the
+dispatch task, and the pending-id list is never drained. It also reports every
+non-message event as "ignore", which drops edits, deletions and the rest.
 """
 
 from __future__ import annotations
@@ -13,10 +12,11 @@ from typing import Any
 
 from baleclient import Client
 
+#: Upper bound on ids of sent messages still waiting for their echo.
 MAX_PENDING_IDS = 512
 
 
-class ChatClient(Client):
+class KitClient(Client):
     def _should_ignore(self, event_type: str, event: Any) -> bool:
         if event_type != "message":
             return False
@@ -28,7 +28,7 @@ class ChatClient(Client):
             targets.remove(message_id)
             return True
 
-        # Echoes we never saw would otherwise pin these ids forever.
+        # Echoes that never arrive would otherwise pin these ids forever.
         if len(targets) > MAX_PENDING_IDS:
             del targets[:-MAX_PENDING_IDS]
 

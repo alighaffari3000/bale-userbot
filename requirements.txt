@@ -1,4 +1,6 @@
-# Exact dependency set for the MVP (pip alternative to pyproject.toml).
+# Runtime dependencies (pip alternative to pyproject.toml).
 BaleClient==1.0.9
-google-genai>=1.20,<3.0
 python-dotenv>=1.0
+
+# Optional: image dimensions and cover thumbnails when sending photos.
+# Pillow>=10.0

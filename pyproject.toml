@@ -1,18 +1,25 @@
 [project]
-name = "bale-ai-userbot"
-version = "0.1.0"
-description = "Minimal AI chatbot that runs on a personal Bale account via BaleClient"
+name = "balekit"
+version = "0.2.0"
+description = "Infrastructure layer for building on a personal Bale account with BaleClient"
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "BaleClient==1.0.9",
-    "google-genai>=1.20,<3.0",
     "python-dotenv>=1.0",
 ]
+
+[project.optional-dependencies]
+# Image dimensions and cover thumbnails when sending photos.
+media = ["Pillow>=10.0"]
+
+[project.scripts]
+balekit = "balekit.cli:main"
 
 [dependency-groups]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
+    "ruff>=0.6",
 ]
 
 [tool.pytest.ini_options]
@@ -22,3 +29,13 @@ asyncio_mode = "auto"
 [tool.ruff]
 line-length = 88
 target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["balekit"]

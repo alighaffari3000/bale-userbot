@@ -1,227 +1,201 @@
-# چت‌بات هوش مصنوعی روی اکانت شخصی بله
+# balekit
 
-MVP کوچک و قابل اجرا روی سرور: پیام خصوصی در بله → Gemini → پاسخ از همان اکانت شخصی.
-لایهٔ ارتباط با بله `BaleClient==1.0.9` است — یک کلاینت کاربر (نه Bot API) که خودش
-fork/rework پروژهٔ aiobale است. نسخه عمداً پین شده و سورس همان انتشار پیش از پیاده‌سازی
-خط‌به‌خط بررسی شده است؛ خلاصهٔ آنچه از سورس تأیید شد در بخش ۲ آمده.
+زیرساخت کار با **اکانت شخصی بله** روی پایتون. یک لایهٔ نازک روی
+[`BaleClient`](https://pypi.org/project/BaleClient/) که ورود/نشست، حلقهٔ رویداد،
+تشخیص نوع پیام و ارسال/دریافت هر نوع فایل را یک‌دست می‌کند.
 
-بدون Bot Token. بدون polling. بدون Redis/Celery/RAG/پنل وب.
+این یک ربات یا محصول نیست: هیچ منطق کاربردی، هیچ مدل هوش مصنوعی و هیچ پایگاه‌دادهٔ
+درون‌ساختی ندارد. کاری که با پیام‌ها می‌کنی، کار برنامهٔ توست.
 
----
+بدون Bot Token — با شمارهٔ خودت لاگین می‌کنی و پیام‌ها از همان اکانت شخصی می‌روند
+و می‌آیند.
 
-## ۱. ساختار پروژه
+```python
+from balekit import BaleApp, Config, MessageKind
 
-```
-bale-ai-userbot/
-├── README.md              ← همین فایل
-├── pyproject.toml         ← وابستگی‌ها (uv)
-├── requirements.txt       ← همان وابستگی‌ها برای pip
-├── .env.example           ← تمام تنظیمات؛ کپی کن به .env
-├── .gitignore             ← session، دیتابیس و .env هرگز کامیت نمی‌شوند
-├── login.py               ← ورود یک‌بارهٔ تعاملی (شماره → OTP → session.bale)
-├── run.py                 ← اجرای ربات
-├── balebot/
-│   ├── config.py          ← خواندن تنظیمات از env (هیچ چیز hard-code نیست)
-│   ├── logging_setup.py   ← لاگ
-│   ├── storage.py         ← تاریخچهٔ گفتگو در SQLite
-│   ├── llm.py             ← Gemini (پشت یک اینترفیس کوچک)
-│   ├── client.py          ← زیرکلاس Client برای اصلاح باگ echo خودِ کاربر
-│   ├── handlers.py        ← فیلتر، حافظه، صدا زدن مدل، ارسال پاسخ
-│   └── app.py             ← سیم‌کشی همه‌چیز + lifespan
-├── examples/echo.py       ← نمونهٔ اکو با import درست (baleclient، نه aiobale)
-└── tests/                 ← ۱۸ تست، بدون نیاز به شبکه یا اکانت واقعی
-```
+app = BaleApp(Config.from_env())
 
-جریان داده:
+@app.on_message(kinds=[MessageKind.PHOTO, MessageKind.VIDEO])
+async def save_media(message, client):
+    path = await app.download(message)          # هر نوع فایلی، یک متد
+    await message.reply(f"saved {path.name}")
 
-```
-Bale (WebSocket)
-  → session._listen()        [BaleClient]
-  → client.handle_update()   [ChatClient: echo خودمان دور ریخته می‌شود]
-  → dispatcher.dispatch("message", ...)
-  → IsText()                 [فیلتر]
-  → MessageHandler           [خصوصی؟ خودم نیستم؟ در allowlist هست؟]
-  → ConversationStore.history()  → Gemini → ConversationStore.append()
-  → message.answer()
+app.run()                                        # اتصال، هندشیک، reconnect
 ```
 
 ---
 
-## ۲. آنچه از سورس BaleClient تأیید شد (قبل از پیاده‌سازی)
+## چرا یک لایه روی BaleClient؟
 
-| موضوع | واقعیت در نسخهٔ 1.0.9 |
-|---|---|
-| ورود | `Client.start()` → `_ensure_token_exists()` → اگر session نبود `PhoneLoginCLI` تعاملی |
-| Session | فایل `*.bale`؛ اگر پسوند ندهی خودش `.bale` می‌گذارد و `resolve()` می‌کند |
-| رویداد | `session._listen()` → `handle_update()` → `dispatcher.dispatch(event_type, event, client=self)` |
-| هندلر | `@dp.message(*filters)`؛ اولین هندلری که فیلترهایش پاس شود اجرا و بقیه رها می‌شوند |
-| پاسخ | `Message.answer(text)` / `Message.reply(text)` / `client.send_message(text, chat_id, chat_type)` |
-| تایپینگ | `client.start_typing(chat_id, chat_type)` / `stop_typing(...)` |
-| Reconnect | حلقهٔ `while not self._stopped` در `start()` + `_ping_loop()` هر ۵ ثانیه |
-| فیلترها | `IsPrivate`, `IsText`, `IsDocument`, `IsGift`, `ChatTypeFilter`, `RegexFilter`, `F` |
+`BaleClient` کار سنگین پروتکل را انجام می‌دهد. اما موقع ساختن روی آن، هر پروژه
+مجبور است این پنج چیز را از نو بنویسد — و سه‌تای اول باگ‌های واقعی کتابخانه‌اند
+که در همین ریپو تست دارند:
 
-سه نکتهٔ ریز اما تعیین‌کننده که در کد لحاظ شده‌اند:
-
-1. **`_should_ignore` باگ دارد.** در `client.py:662` نوشته شده `self._ignored_messages.targets.remove()`
-   بدون آرگومان → برای هر echo از پیام‌های خودمان `TypeError` می‌دهد، و لیست `targets`
-   هیچ‌وقت خالی نمی‌شود. `balebot/client.py` این متد را درست override می‌کند
-   (حذف درست + سقف ۵۱۲ آیدی). علاوه بر آن، هندلر مستقل هم چک می‌کند
-   `message.sender_id == client.id` باشد یا نه — دو لایه محافظت در برابر لوپ.
-2. **هندلر باید `async def` باشد، نه یک شیء صدازدنی.** دیسپچر با
-   `inspect.iscoroutinefunction` تصمیم می‌گیرد؛ برای instance این تابع `False`
-   برمی‌گرداند و هندلر داخل thread executor بدون await رها می‌شود. به همین دلیل
-   `build_router` یک `async def` ثبت می‌کند که به شیء هندلر delegate می‌کند.
-3. **آپدیت‌ها به شکل task موازی dispatch می‌شوند** (`asyncio.create_task` در `aiohttp.py:77`)
-   و استثناها بی‌صدا بلعیده می‌شوند. پس هندلر خودش `try/except` سراسری دارد و برای هر چت
-   یک `asyncio.Lock` می‌گیرد تا ترتیب گفتگو حفظ شود.
-
-دربارهٔ خواستهٔ «اصلاح import های قدیمی aiobale»: در خود پکیج نصب‌شده هیچ `import aiobale`ای
-نیست؛ فقط فایل‌های `examples/` مخزن (به‌جز `magazine.py`) هنوز `aiobale` را import می‌کنند.
-نمونهٔ درست در `examples/echo.py` همین پروژه آمده است. سورس BaleClient دست‌نخورده می‌ماند
-(به‌عنوان dependency نصب می‌شود)، و تنها اصلاح رفتاری‌اش در `balebot/client.py` به شکل
-زیرکلاس انجام شده تا ارتقای نسخه ساده بماند.
-
----
-
-## ۳. وابستگی‌ها
-
-```
-BaleClient==1.0.9      # لایهٔ بله (خودش aiohttp, pydantic, magic-filter, blackboxprotobuf می‌آورد)
-google-genai>=1.20,<3  # Gemini
-python-dotenv>=1.0     # خواندن .env
-```
-Python 3.11+ الزامی است (خودِ BaleClient این را می‌خواهد). SQLite از کتابخانهٔ استاندارد
-استفاده می‌شود؛ هیچ ORM یا درایور اضافه‌ای نصب نمی‌شود.
-
-برای تست: `pytest`, `pytest-asyncio`.
-
----
-
-## ۴. راه‌اندازی
-
-```bash
-git clone https://github.com/alighaffari3000/bale-ai-userbot.git
-cd bale-ai-userbot
-
-# ۱) محیط و وابستگی‌ها
-uv venv --python 3.11
-uv pip install -r requirements.txt
-# یا: python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt
-
-# ۲) تنظیمات
-cp .env.example .env
-$EDITOR .env          # حداقل GEMINI_API_KEY و SYSTEM_PROMPT
-
-# ۳) ورود یک‌بارهٔ اکانت شخصی (شماره → کد پیامکی)
-.venv/bin/python login.py
-#   شماره را بدون + و به‌صورت 98XXXXXXXXXX وارد کن
-#   خروجی: data/session.bale با دسترسی 0600
-
-# ۴) اجرا
-.venv/bin/python run.py
-```
-
-اجرای دوم به بعد دیگر OTP نمی‌خواهد؛ توکن از `data/session.bale` خوانده می‌شود.
-
-اجرای دائمی روی VPS (systemd):
-
-```ini
-# /etc/systemd/system/bale-chatbot.service
-[Unit]
-Description=Bale AI chatbot
-After=network-online.target
-
-[Service]
-User=balebot
-WorkingDirectory=/opt/bale-ai-userbot
-ExecStart=/opt/bale-ai-userbot/.venv/bin/python run.py
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-`Restart=always` تنها تور ایمنی بیرونی است؛ قطع و وصل شدن شبکه را خودِ BaleClient
-داخل `start()` مدیریت می‌کند (cleanup → ۵ ثانیه صبر → connect → handshake).
-
----
-
-## ۵. تنظیمات (همه در `.env`)
-
-| کلید | پیش‌فرض | توضیح |
+| مشکل در `BaleClient 1.0.9` | چه بلایی سرت می‌آورد | راه‌حل در balekit |
 |---|---|---|
-| `GEMINI_API_KEY` | — | الزامی |
-| `GEMINI_MODEL` | `gemini-2.5-flash` | مدل |
-| `LLM_TEMPERATURE` / `LLM_MAX_OUTPUT_TOKENS` | `0.7` / `1024` | |
-| `SYSTEM_PROMPT` / `SYSTEM_PROMPT_FILE` | متن پیش‌فرض | پرامپت سیستمی (فایل اولویت دارد) |
-| `BALE_SESSION_FILE` | `./data/session.bale` | محل توکن اکانت |
-| `BALE_PROXY` | — | پراکسی خروجی |
-| `BALE_ALLOWED_USER_IDS` | خالی | فقط به این آیدی‌ها جواب بده |
-| `REPLY_MODE` | `answer` | `answer` یا `reply` (نقل‌قول‌دار) |
-| `TYPING_INDICATOR` | `true` | نمایش «در حال نوشتن» |
-| `HANDLE_GROUPS` | `false` | جواب دادن در گروه/کانال |
-| `DB_PATH` | `./data/chat.db` | |
-| `MAX_HISTORY_TURNS` | `12` | تعداد رفت‌وبرگشت‌هایی که به مدل داده می‌شود |
-| `MAX_INPUT_CHARS` / `MAX_REPLY_CHARS` | `4000` / `3500` | ورودی بلند رد، پاسخ بلند تکه‌تکه می‌شود |
-| `LOG_LEVEL` / `LOG_MESSAGE_TEXT` | `INFO` / `false` | متن پیام‌ها به‌صورت پیش‌فرض لاگ نمی‌شود |
+| `Client._should_ignore` متد `list.remove()` را بدون آرگومان صدا می‌زند | هر echo از پیام‌های خودت `TypeError` می‌دهد و لیست pending هیچ‌وقت خالی نمی‌شود (نشت حافظه) | `KitClient` متد را درست override می‌کند + سقف ۵۱۲ آیدی |
+| همان متد برای رویدادهای غیرِ `message` همیشه «نادیده بگیر» برمی‌گرداند | ویرایش/حذف پیام و بقیهٔ رویدادها هرگز dispatch نمی‌شوند | همان override |
+| `AudioExt(album=...)` تگ‌ها را می‌اندازد (validatorِ before کلیدهای aliasی را با `None` بازنویسی می‌کند) — و `send_audio` دقیقاً همین کار را می‌کند | آلبوم/ژانر/نام قطعه بی‌صدا گم می‌شوند | `audio_ext()` از طریق aliasها می‌سازد؛ `send_media` وقتی تگ داری از مسیر امن می‌رود |
+| دیسپچر با `inspect.iscoroutinefunction` تصمیم می‌گیرد | هندلری که یک شیء صدازدنی است (نه تابع) داخل thread executor بدون await رها می‌شود | `wrap_handler` همیشه یک coroutine function ثبت می‌کند |
+| آپدیت‌ها با `asyncio.create_task` پرتاب می‌شوند | استثنای هندلر همراه task بی‌صدا گم می‌شود | `wrap_handler` لاگ می‌کند و اختیاری `on_error` صدا می‌زند |
 
-دستورهای درون چت: `/help` و `/reset` (پاک کردن حافظهٔ همان چت).
+به‌علاوهٔ چیزی که اصلاً وجود ندارد: **یک واژگان واحد برای «این پیام چیست؟»**.
+در پروتکل بله عکس، ویدئو، ویس، موزیک، گیف و فایل ساده همگی یک `DocumentMessage`
+هستند و فقط `document.ext` و MIME از هم جدایشان می‌کند — و اگر پیام کیبورد اینلاین
+داشته باشد، یک لایه هم داخل `content.bot_message` فرو می‌رود. `describe()` همهٔ این
+را صاف می‌کند.
 
 ---
 
-## ۶. تست
+## پشتیبانی از فرمت‌ها
+
+| نوع | دریافت (`describe`) | ارسال (`send_media`) | کپی بدون آپلود (`resend`) |
+|---|---|---|---|
+| متن | ✅ `MessageKind.TEXT` | `client.send_message` | — |
+| عکس | ✅ `PHOTO` (+ابعاد، thumbnail) | ✅ (ابعاد و کاور خودکار با Pillow) | ✅ |
+| ویدئو | ✅ `VIDEO` (+ابعاد، مدت) | ✅ | ✅ |
+| گیف | ✅ `GIF` | ✅ | ✅ |
+| پیام صوتی | ✅ `VOICE` (+مدت) | ✅ | ✅ |
+| موزیک | ✅ `AUDIO` (+مدت، آلبوم/ژانر/ترک) | ✅ (تگ‌ها حفظ می‌شوند) | ✅ |
+| فایل | ✅ `DOCUMENT` (+نام، MIME، حجم) | ✅ | ✅ |
+| کپشن روی هر مدیا | ✅ | ✅ | ✅ |
+| کیبورد اینلاین | ✅ (`has_keyboard`) | ✅ (`reply_markup`) | — |
+| فوروارد | ✅ `FORWARD` | — | — |
+| پیام سرویس | ✅ `SERVICE` (+متن) | — | — |
+| بستهٔ هدیه | ✅ `GIFT` | `client.send_gift` | — |
+
+**لوکیشن، مخاطب (contact card) و استیکر پشتیبانی نمی‌شوند** — نه در balekit و نه
+در `BaleClient 1.0.9`. در `MessageContent` این نسخه فقط `document`، `text`،
+`service_message`، `bot_message` و `gift` وجود دارد؛ هیچ فیلد geo/contact/sticker
+در پروتکلِ پیاده‌سازی‌شده نیست. اگر لازمشان داری، باید اول در خودِ کتابخانه (یا یک
+فورک) به پروتکل اضافه شوند؛ balekit چیزی را که لایهٔ زیرین ندارد نمی‌تواند بسازد.
+
+---
+
+## نصب
 
 ```bash
-.venv/bin/python -m pytest tests -q     # 18 passed
+pip install -r requirements.txt        # یا: uv pip install -e ".[media]"
+pip install Pillow                     # اختیاری: ابعاد و thumbnail عکس
 ```
-تست‌ها شبکه یا اکانت واقعی نمی‌خواهند: `tests/test_handlers.py` منطق گیت‌کیپینگ،
-حافظه و خطای مدل را می‌سنجد و `tests/test_dispatch_integration.py` مسیر واقعی
-`Dispatcher → Router → filter → handler → answer` را با اشیای واقعی `Message`
-و همچنین اصلاح `_should_ignore` را بررسی می‌کند.
+
+Python 3.11+ (الزام خود `BaleClient`).
+
+## ورود (یک‌بار)
+
+```bash
+cp .env.example .env
+python -m balekit login                # شماره → کد پیامکی → data/session.bale
+python -m balekit whoami               # نشست ذخیره‌شده مال کدام اکانت است
+```
+
+از این به بعد نشست از فایل خوانده می‌شود و OTP لازم نیست.
 
 ---
 
-## ۷. ملاحظات امنیتی
+## API
 
-- **`session.bale` عملاً رمز عبور اکانت است.** JWT کامل اکانت داخلش است؛ هرکس آن را
-  داشته باشد همان اکانت است. در git نرود (`.gitignore` هم `data/` و هم `*.bale` و هم
-  `.env` را کنار می‌گذارد)، در ایمیج داکر عمومی نرود، در بکاپ عمومی نرود.
-  `prepare_session_file()` هنگام هر اجرا مجوز فایل را روی `0600` تنظیم می‌کند.
-- **کلید Gemini** فقط از env/`.env` خوانده می‌شود و هرگز لاگ نمی‌شود.
-- **محتوای چت داده‌ای شخصی است.** `LOG_MESSAGE_TEXT=false` پیش‌فرض است؛ متن پیام‌ها
-  فقط با روشن کردن صریح آن لاگ می‌شوند. متن پیام‌ها در `chat.db` بدون رمزنگاری ذخیره
-  می‌شود — فایل را روی دیسک رمزگذاری‌شده/با دسترسی محدود نگه دار و برای پاک‌سازی
-  دوره‌ای `/reset` یا حذف رکوردها را در نظر بگیر.
-- **allowlist را روشن کن** اگر ربات فقط برای چند نفر است (`BALE_ALLOWED_USER_IDS`).
-  در غیر این صورت هرکسی که به شمارهٔ شما پیام بدهد به بودجهٔ Gemini شما دسترسی دارد.
-- **گروه‌ها پیش‌فرض خاموش‌اند.** اکانتی که به همهٔ پیام‌های گروه جواب بدهد سریع
-  ریپورت و مسدود می‌شود.
-- **پارامترهای device در `start_phone_auth`** (`device_title`، `device_hash`، `api_key`،
-  `app_id`) دست‌نخورده باقی مانده‌اند؛ تغییرشان بدون دلیل مشخص فقط ریسک بلاک‌شدن دارد.
+**`BaleApp`** — اجرا و ثبت هندلر:
+
+```python
+app = BaleApp(Config.from_env())
+
+@app.on_message(kinds=[MessageKind.TEXT])          # فیلتر بر اساس نوع
+async def on_text(message, client): ...
+
+@app.on_message(IsMedia(), FromUsers(123, 456))     # فیلترهای دلخواه
+async def on_media(message, client): ...
+
+app.run()            # مسدودکننده
+await app.start()    # داخل event loop خودت
+```
+
+گیت‌های سطح config (خصوصی/گروه، allowlist، پیام‌های خودت) قبل از فیلترهای تو
+اعمال می‌شوند.
+
+**`describe(message) -> MessageInfo`** — نمای صاف پیام:
+`kind`, `text`, `caption`, `body`, `media`, `has_keyboard`, `is_forward`,
+`reply_to_id`, `sender_id`, `chat_id`, `chat_type`, `service_text`.
+و `MediaInfo`: `file_id`, `access_hash`, `mime_type`, `name`, `size`,
+`width`, `height`, `duration`, `has_thumb`, `album`, `genre`, `track`.
+
+**ارسال و دریافت:**
+
+```python
+await app.send("photo.jpg", chat_id)                 # نوع از روی فایل تشخیص داده می‌شود
+await app.send(raw_bytes, chat_id, name="a.mp3", album="Album")
+await app.reply_with(message, "doc.pdf", caption="…")
+await app.resend(message, other_chat_id)             # کپی بدون دانلود/آپلود
+data  = await app.download(message, destination=None)   # bytes
+path  = await app.download(message)                     # فایل در پوشهٔ دانلود
+```
+
+**فیلترها:** `Kind(...)`, `IsMedia()`, `NotSelf()`, `FromUsers(...)`,
+`InChats(...)`, `ChatScope(private=, groups=)` — کنار فیلترهای خود
+`baleclient.filters` و `F` قابل استفاده‌اند.
+
+هرجا لازم شد، `app.client` همان `Client` کامل `BaleClient` است: هیچ چیزی از
+کتابخانهٔ زیرین پنهان نشده.
 
 ---
 
-## ۸. محدودیت‌های شناخته‌شده
+## تنظیمات
 
-**ناشی از غیررسمی بودن API بله:**
-- BaleClient با API داخلی بله (WebSocket + protobuf) کار می‌کند، نه Bot API رسمی.
-  این API بدون اطلاع قبلی تغییر می‌کند؛ هر تغییری می‌تواند parse را بشکند. نسخهٔ
-  `BaleClient` را پین نگه دار و قبل از ارتقا تست کن.
-- استفادهٔ خودکار از اکانت شخصی می‌تواند خلاف قواعد سرویس تلقی شود و به تعلیق یا
-  مسدودی دائم اکانت منجر شود. ریت‌لیمیت را رعایت کن، اسپم نکن.
-- خودِ کتابخانه هنوز کوچک و کم‌آزمون است (چند ستاره، مستندات ناقص). آن را
-  «یک کلاینت reverse-engineered قابل استفاده» فرض کن، نه SDK پایدار.
+همه از `.env` یا محیط: `BALE_SESSION_FILE`, `BALE_PROXY`, `BALE_DOWNLOAD_DIR`,
+`HANDLE_PRIVATE`, `HANDLE_GROUPS`, `BALE_ALLOWED_USER_IDS`, `IGNORE_SELF`,
+`SERIALIZE_PER_CHAT`, `LOG_LEVEL`, `LOG_MESSAGE_TEXT`. جزئیات در `.env.example`.
 
-**محدودیت‌های خودِ این MVP:**
-- فقط پیام متنی. عکس/فایل/ویس دریافتی نادیده گرفته می‌شوند (فرستادنشان در BaleClient
-  هست، اما در این MVP سیم‌کشی نشده).
-- یک اکانت در هر پروسه. برای چند اکانت، چند پروسه با `BALE_SESSION_FILE` جدا.
-- حافظه فقط بازپخش N پیام آخر همان چت است؛ نه خلاصه‌سازی، نه vector DB، نه RAG.
-- هر چت هم‌زمان فقط یک پرسش را پردازش می‌کند؛ پیام دوم در حین پردازش، پیام
-  «مشغولم» می‌گیرد (به‌جای صف‌بندی).
-- `login.py` تعاملی است و باید یک‌بار روی ترمینال اجرا شود؛ روی سرور بی‌ترمینال،
-  فایل session را از یک ماشین امن منتقل کن (با scp، نه از طریق git).
-- در BaleClient 1.0.9 رویدادهای غیر از `message` (ویرایش/حذف پیام و...) در متد
-  اصلی `_should_ignore` همیشه دور ریخته می‌شوند. زیرکلاس ما این را هم درست می‌کند،
-  ولی این MVP عمداً هیچ هندلری برای آن‌ها ثبت نمی‌کند.
+## نمونه‌ها
+
+- `examples/echo_any.py` — هر چیزی که آمد را برمی‌گرداند (مدیا بدون آپلود مجدد)
+- `examples/inspect_messages.py` — چاپ یک‌خطی هر پیام ورودی
+- `examples/download_media.py` — ذخیرهٔ هر فایل دریافتی
+
+---
+
+## تست
+
+```bash
+python -m pytest tests -q      # 76 تست، بدون شبکه و بدون اکانت
+```
+
+تست‌ها با اشیای واقعی `baleclient.types` ساخته می‌شوند (نه mock پروتکل): هر شکل
+محتوا یک‌بار از مسیر `Dispatcher → filter → handler` عبور داده می‌شود. دو تست
+عمداً باگ‌های بالادست را assert می‌کنند؛ اگر روزی fail شدند یعنی `BaleClient`
+درستشان کرده و می‌شود workaround را حذف کرد.
+
+**تست زنده** (نیازمند اکانت واقعی — در CI اجرا نمی‌شود):
+
+```bash
+python tools/live_check.py            # به «پیام‌های ذخیره‌شده»ی خودت
+python tools/live_check.py --chat ID --keep
+```
+
+هر نوع پیام را می‌فرستد، از history می‌خواند، دوباره classify می‌کند، یکی را
+دانلود می‌کند و در پایان پیام‌های خودش را پاک می‌کند.
+
+---
+
+## امنیت
+
+- `session.bale` عملاً رمز عبور اکانت است. در git، ایمیج داکر یا بکاپ عمومی نرود.
+  `.gitignore` هم `data/` و هم `*.bale` و هم `.env` را کنار می‌گذارد و
+  `prepare_session_file()` مجوز فایل را روی `0600` می‌گذارد.
+- متن پیام‌ها به‌صورت پیش‌فرض لاگ نمی‌شود (`LOG_MESSAGE_TEXT=false`).
+- اگر سرویس فقط برای چند نفر است، `BALE_ALLOWED_USER_IDS` را پر کن.
+- گروه‌ها پیش‌فرض خاموش‌اند؛ اکانتی که به هر پیام گروه واکنش نشان دهد سریع ریپورت
+  می‌شود.
+- پارامترهای device در `start_phone_auth` دست‌نخورده رها شده‌اند؛ تغییرشان بدون
+  دلیل مشخص فقط ریسک بلاک است.
+
+## محدودیت‌ها
+
+- API بله **غیررسمی و داخلی** است (WebSocket + protobuf)، نه Bot API. می‌تواند
+  بدون اطلاع تغییر کند؛ به همین دلیل نسخهٔ `BaleClient` پین شده است.
+- اتوماسیون روی اکانت شخصی ممکن است خلاف قواعد سرویس تلقی شود؛ ریسک تعلیق
+  اکانت واقعی است.
+- لوکیشن/مخاطب/استیکر: پشتیبانی نمی‌شود (بالاتر توضیح داده شد).
+- ابعاد ویدئو و مدت زمان به‌صورت خودکار استخراج نمی‌شوند (نیازمند ffprobe است)؛
+  اگر می‌خواهی پیش‌نمایش درست باشد خودت `width`/`height`/`duration` را بده.
+- `MessageKind.FORWARD` یعنی «استاب خالی»؛ محتوای اصلی فوروارد در پیام نقل‌شده
+  (`message.replied_to`) است.

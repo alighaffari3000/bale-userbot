@@ -1,4 +1,4 @@
-"""Logging setup shared by the runner and the login helper."""
+"""Logging setup used by the app runner and the CLI."""
 
 from __future__ import annotations
 
@@ -15,5 +15,4 @@ def setup_logging(level: str = "INFO") -> None:
         stream=sys.stdout,
         force=True,
     )
-    # The Bale transport is chatty at DEBUG and can print raw frames.
     logging.getLogger("aiohttp").setLevel(logging.WARNING)
