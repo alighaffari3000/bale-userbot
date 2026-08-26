@@ -13,7 +13,7 @@ from typing import Any
 from baleclient import Dispatcher, Router
 from baleclient.enums import ChatType
 from baleclient.filters import Filter
-from baleclient.types import Message
+from baleclient.types import Message, Permissions
 
 from .client import KitClient
 from .config import Config
@@ -27,8 +27,44 @@ from .extras import (
     set_typing,
     unreact,
 )
+from .groups import (
+    GroupInfo,
+    MemberInfo,
+    MembershipChanges,
+    export_members,
+    get_group,
+    iter_members,
+    list_groups,
+    load_admins,
+    load_members,
+    member_count,
+    watch_membership,
+)
+from .history import export_history, iter_history, load_history
 from .logging_setup import setup_logging
 from .media import FileLike, download, resend, send_media
+from .moderation import (
+    InviteLink,
+    allow,
+    banned,
+    demote,
+    invite_link,
+    join,
+    kick,
+    leave,
+    mute,
+    permissions_of,
+    pin,
+    pins,
+    preview,
+    promote,
+    restrict,
+    revoke_invite_link,
+    unban,
+    unmute,
+    unpin,
+    unpin_all,
+)
 from .routing import (
     ChatScope,
     ChatSerializer,
@@ -312,15 +348,165 @@ class BaleApp:
             Path(destination).mkdir(parents=True, exist_ok=True)
         return await download(self.client, message, destination)
 
+    # -- groups and members ------------------------------------------------
+    async def group(self, chat_id: int, **kwargs: Any) -> GroupInfo:
+        """Title, member count, owner and type of one group or channel."""
+        return await get_group(self.client, chat_id, **kwargs)
+
+    async def member_count(self, chat_id: int) -> int:
+        """How many members a group has, without listing them."""
+        return await member_count(self.client, chat_id)
+
+    async def members(self, chat_id: int, **kwargs: Any) -> list[MemberInfo]:
+        """The member list of a group; `profiles=True` adds names and usernames."""
+        return await load_members(self.client, chat_id, **kwargs)
+
+    def iter_members(self, chat_id: int, **kwargs: Any) -> Any:
+        """Members one at a time, for groups too large to hold in memory."""
+        return iter_members(self.client, chat_id, **kwargs)
+
+    async def admins(self, chat_id: int, **kwargs: Any) -> list[MemberInfo]:
+        """The admins and owner of a group."""
+        return await load_admins(self.client, chat_id, **kwargs)
+
+    async def groups(self, **kwargs: Any) -> list[GroupInfo]:
+        """Every group and channel this account is in."""
+        return await list_groups(self.client, **kwargs)
+
+    async def export_members(
+        self, chat_id: int, **kwargs: Any
+    ) -> tuple[GroupInfo, list[dict[str, Any]]]:
+        """A group and its members as plain dicts, ready for you to store."""
+        return await export_members(self.client, chat_id, **kwargs)
+
+    async def watch_membership(
+        self, chat_id: int, previous: Iterable[MemberInfo], **kwargs: Any
+    ) -> tuple[MembershipChanges, list[MemberInfo]]:
+        """Diff against your last snapshot; returns the changes and the new one."""
+        return await watch_membership(self.client, chat_id, previous, **kwargs)
+
+    # -- history -----------------------------------------------------------
+    async def history(
+        self,
+        chat_id: int,
+        chat_type: ChatType = ChatType.PRIVATE,
+        **kwargs: Any,
+    ) -> list[Message]:
+        """A chat's messages, oldest first. `since=`/`until=` bound the range."""
+        return await load_history(self.client, chat_id, chat_type, **kwargs)
+
+    def iter_history(
+        self,
+        chat_id: int,
+        chat_type: ChatType = ChatType.PRIVATE,
+        **kwargs: Any,
+    ) -> Any:
+        """Messages newest-first, one at a time, for a long archive."""
+        return iter_history(self.client, chat_id, chat_type, **kwargs)
+
+    async def export_history(
+        self,
+        chat_id: int,
+        chat_type: ChatType = ChatType.PRIVATE,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
+        """A chat's archive as plain dicts, ready for you to store."""
+        return await export_history(self.client, chat_id, chat_type, **kwargs)
+
+    # -- moderation --------------------------------------------------------
+    async def kick(self, chat_id: int, user_id: int) -> Any:
+        """Remove someone from a group or channel."""
+        return await kick(self.client, chat_id, user_id)
+
+    async def unban(self, chat_id: int, user_id: int) -> Any:
+        """Let a removed user back in."""
+        return await unban(self.client, chat_id, user_id)
+
+    async def banned(self, chat_id: int) -> list[int]:
+        """The user ids currently barred from a group."""
+        return await banned(self.client, chat_id)
+
+    async def promote(self, chat_id: int, user_id: int, **kwargs: Any) -> Any:
+        """Make someone an admin, optionally granting rights in the same call."""
+        return await promote(self.client, chat_id, user_id, **kwargs)
+
+    async def demote(self, chat_id: int, user_id: int) -> Any:
+        """Take admin rights back."""
+        return await demote(self.client, chat_id, user_id)
+
+    async def permissions_of(self, chat_id: int, user_id: int) -> Permissions:
+        """What one member is currently allowed to do."""
+        return await permissions_of(self.client, chat_id, user_id)
+
+    async def restrict(
+        self, chat_id: int, user_id: int, *names: str, **flags: bool
+    ) -> Permissions:
+        """Turn named permissions off, leaving every other flag alone."""
+        return await restrict(self.client, chat_id, user_id, *names, **flags)
+
+    async def allow(
+        self, chat_id: int, user_id: int, *names: str, **flags: bool
+    ) -> Permissions:
+        """Turn named permissions on, leaving every other flag alone."""
+        return await allow(self.client, chat_id, user_id, *names, **flags)
+
+    async def mute(self, chat_id: int, user_id: int) -> Permissions:
+        """Take away every way of speaking, without removing the member."""
+        return await mute(self.client, chat_id, user_id)
+
+    async def unmute(self, chat_id: int, user_id: int) -> Permissions:
+        """Give speech back."""
+        return await unmute(self.client, chat_id, user_id)
+
+    # -- pins and links ----------------------------------------------------
+    async def pins(self, chat_id: int, **kwargs: Any) -> list[Message]:
+        """Every pinned message, with the chat type upstream gets wrong."""
+        return await pins(self.client, chat_id, **kwargs)
+
+    async def pin(self, chat_id: int, message: Message) -> Any:
+        """Pin a message."""
+        return await pin(self.client, chat_id, message)
+
+    async def unpin(self, chat_id: int, message: Message) -> Any:
+        """Unpin one message."""
+        return await unpin(self.client, chat_id, message)
+
+    async def unpin_all(self, chat_id: int) -> Any:
+        """Clear every pin at once."""
+        return await unpin_all(self.client, chat_id)
+
+    async def invite_link(self, chat_id: int, *, revoke: bool = False) -> InviteLink:
+        """The group's invite link; `revoke=True` replaces it with a new one."""
+        call = revoke_invite_link if revoke else invite_link
+        return await call(self.client, chat_id)
+
+    async def preview(self, token_or_url: str) -> GroupInfo:
+        """What a group looks like from the outside, before joining."""
+        return await preview(self.client, token_or_url)
+
+    async def join(self, token_or_url: str) -> Any:
+        """Join a group or channel from an invite link."""
+        return await join(self.client, token_or_url)
+
+    async def leave(self, chat_id: int) -> Any:
+        """Leave a group or channel."""
+        return await leave(self.client, chat_id)
+
     # -- lifecycle ---------------------------------------------------------
-    async def start(self) -> None:
+    async def start(self, *, background: bool = False) -> None:
+        """Connect and begin handling updates.
+
+        Blocks until the client stops. `background=True` returns as soon as the
+        connection is up, which is what a one-shot script — export the members
+        of a group, then exit — needs instead of an event loop.
+        """
         if not self.config.session_file.exists():
             raise SessionMissingError(
                 f"no Bale session at {self.config.session_file}. "
                 "Run `python -m bale_userbot login` once to authenticate."
             )
         setup_logging(self.config.log_level)
-        await self.client.start()
+        await self.client.start(run_in_background=background)
 
     async def stop(self) -> None:
         if self._client is not None:
