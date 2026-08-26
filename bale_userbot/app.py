@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import stat
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -33,6 +33,7 @@ from .groups import (
     MembershipChanges,
     export_members,
     get_group,
+    hydrate_profiles,
     iter_members,
     list_groups,
     load_admins,
@@ -60,6 +61,8 @@ from .moderation import (
     promote,
     restrict,
     revoke_invite_link,
+    set_default_permissions,
+    set_permissions,
     unban,
     unmute,
     unpin,
@@ -379,6 +382,12 @@ class BaleApp:
         """A group and its members as plain dicts, ready for you to store."""
         return await export_members(self.client, chat_id, **kwargs)
 
+    async def hydrate_profiles(
+        self, members: Sequence[MemberInfo], **kwargs: Any
+    ) -> list[MemberInfo]:
+        """Fill in names and usernames for members you already have."""
+        return await hydrate_profiles(self.client, members, **kwargs)
+
     async def watch_membership(
         self, chat_id: int, previous: Iterable[MemberInfo], **kwargs: Any
     ) -> tuple[MembershipChanges, list[MemberInfo]]:
@@ -449,6 +458,16 @@ class BaleApp:
     ) -> Permissions:
         """Turn named permissions on, leaving every other flag alone."""
         return await allow(self.client, chat_id, user_id, *names, **flags)
+
+    async def set_permissions(
+        self, chat_id: int, user_id: int, **flags: bool
+    ) -> Permissions:
+        """Set named permissions to explicit values, leaving the rest alone."""
+        return await set_permissions(self.client, chat_id, user_id, **flags)
+
+    async def set_default_permissions(self, chat_id: int, **flags: bool) -> Permissions:
+        """Change the group's baseline permissions, one named flag at a time."""
+        return await set_default_permissions(self.client, chat_id, **flags)
 
     async def mute(self, chat_id: int, user_id: int) -> Permissions:
         """Take away every way of speaking, without removing the member."""

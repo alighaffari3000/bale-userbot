@@ -221,6 +221,8 @@ groups  = await app.groups()                      # همهٔ گروه/کانال
 
 async for m in app.iter_members(chat_id):         # گروه بزرگ، بدون بارِ حافظه
     ...
+
+members = await app.hydrate_profiles(old_snapshot)  # اسنپ‌شات ذخیره‌شده را نام‌دار کن
 ```
 
 `GroupInfo`: `id`, `title`, `members_count`, `chat_type`, `access_hash`,
@@ -325,6 +327,9 @@ await app.allow(chat_id, user_id, "pin_message")        # فقط همین یکی
 await app.mute(chat_id, user_id)                        # همهٔ راه‌های حرف‌زدن
 await app.unmute(chat_id, user_id)
 perms = await app.permissions_of(chat_id, user_id)
+
+await app.set_permissions(chat_id, user_id, send_message=False, pin_message=True)
+await app.set_default_permissions(chat_id, send_media=False)   # پیش‌فرضِ کل گروه
 ```
 
 **چرا این لایه لازم است:** `Permissions()` هر بیست پرچمش پیش‌فرض `False` است.
@@ -383,7 +388,7 @@ await app.leave(chat_id)
 ## تست
 
 ```bash
-python -m pytest tests -q      # 261 تست، بدون شبکه و بدون اکانت
+python -m pytest tests -q      # 264 تست، بدون شبکه و بدون اکانت
 ```
 
 تست‌ها با اشیای واقعی `baleclient.types` ساخته می‌شوند (نه mock پروتکل): هر شکل

@@ -443,3 +443,15 @@ async def test_a_fetched_profile_wins_over_the_wire_name():
     client = FakeClient(pages=[([named], None)], users=[user(1, name="New Name")])
     (only,) = await load_members(client, GROUP_ID, profiles=True)
     assert only.name == "New Name" and only.profile_loaded is True
+
+
+@pytest.mark.asyncio
+async def test_profiles_can_be_filled_in_later_from_the_app():
+    # A stored snapshot has ids but no names; hydrating it must not require
+    # re-listing the whole group.
+    from bale_userbot import BaleApp, Config
+
+    app = BaleApp(Config())
+    app._client = FakeClient(users=[user(1, name="Ali")])
+    (only,) = await app.hydrate_profiles([member_info(member(1), GROUP_ID)])
+    assert only.name == "Ali" and only.profile_loaded is True

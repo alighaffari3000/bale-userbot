@@ -63,9 +63,6 @@ _CONDITIONS: dict[str, Condition] = {
     "excepted_permissions": Condition(excepted_permissions=BoolValue(value=True)),
 }
 
-#: Chat types that have a member list at all.
-GROUP_CHAT_TYPES = (ChatType.GROUP, ChatType.SUPER_GROUP, ChatType.CHANNEL)
-
 
 class GroupUnavailableError(RuntimeError):
     """The server answered about a group with no group in it.

@@ -266,3 +266,28 @@ async def test_invite_link_and_its_revocation():
     fresh = await revoke_invite_link(client, GROUP_ID)
     assert fresh.url.endswith("-new") and fresh.revoked is True
     assert fresh.as_dict()["chat_id"] == GROUP_ID
+
+
+# --- the facade ------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_group_defaults_are_reachable_from_the_app():
+    # Every other permission call has a facade method; without this one the
+    # group-wide baseline could only be changed through the raw client.
+    from bale_userbot import BaleApp, Config
+
+    app = BaleApp(Config())
+    app._client = FakeClient()
+    updated = await app.set_default_permissions(GROUP_ID, send_media=True)
+    assert updated.send_media is True
+
+
+@pytest.mark.asyncio
+async def test_explicit_permission_values_are_reachable_from_the_app():
+    from bale_userbot import BaleApp, Config
+
+    app = BaleApp(Config())
+    app._client = FakeClient(permissions=Permissions(send_message=True))
+    updated = await app.set_permissions(GROUP_ID, USER_ID, send_message=False)
+    assert updated.send_message is False
