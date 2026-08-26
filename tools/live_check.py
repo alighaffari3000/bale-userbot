@@ -26,8 +26,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from baleclient.enums import ChatType  # noqa: E402
 
-from balekit import BaleApp, Config, describe  # noqa: E402
-from balekit.media import send_media  # noqa: E402
+from bale_userbot import BaleApp, Config, MessageKind, describe  # noqa: E402
+from bale_userbot.extras import send_contact, send_location  # noqa: E402
+from bale_userbot.media import resend, send_media  # noqa: E402
 
 # --- tiny synthetic files, so the tool has no asset directory ---------------
 
@@ -83,7 +84,10 @@ CASES = [
     ("video", _mp4(), "probe.mp4"),
     ("audio", _mp3(), "probe.mp3"),
     ("voice", _ogg(), "probe.ogg"),
-    ("document", b"balekit live check\n", "probe.txt"),
+    ("document", b"bale-userbot live check\n", "probe.txt"),
+    ("location", None, None),
+    ("contact", None, None),
+    ("sticker", None, None),
 ]
 
 
@@ -112,9 +116,32 @@ async def main() -> int:
                 results.append((label, "skipped", ""))
                 continue
             try:
-                if payload is None:
+                if label == "location":
+                    message = await send_location(
+                        client, 35.6892, 51.3890, chat_id, chat_type
+                    )
+                elif label == "contact":
+                    message = await send_contact(
+                        client,
+                        "bale-userbot check",
+                        ["09120000000"],
+                        chat_id,
+                        chat_type,
+                    )
+                elif label == "sticker":
+                    # Stickers cannot be synthesized: re-send one from history.
+                    history = await client.load_history(chat_id, chat_type, limit=50)
+                    source = next(
+                        (m for m in history if describe(m).kind is MessageKind.STICKER),
+                        None,
+                    )
+                    if source is None:
+                        results.append((label, "skipped (none in history)", ""))
+                        continue
+                    message = await resend(client, source, chat_id, chat_type)
+                elif payload is None:
                     message = await client.send_message(
-                        f"balekit live check: {label}", chat_id, chat_type
+                        f"bale-userbot live check: {label}", chat_id, chat_type
                     )
                 else:
                     message = await send_media(
@@ -123,12 +150,24 @@ async def main() -> int:
                         chat_id,
                         chat_type,
                         name=name,
-                        caption=f"balekit live check: {label}",
+                        caption=f"bale-userbot live check: {label}",
+                        # Voice vs music is the sender's choice, not something
+                        # the bytes can say; everything else auto-detects.
+                        kind=MessageKind.VOICE if label == "voice" else None,
                     )
                 sent.append(message)
                 info = describe(message)
                 detail = ""
-                if info.media:
+                if info.location:
+                    detail = f"({info.location.latitude}, {info.location.longitude})"
+                elif info.contact:
+                    detail = f"{info.contact.name} {info.contact.phones}"
+                elif info.sticker:
+                    detail = (
+                        f"sticker {info.sticker.sticker_id} "
+                        f"coll {info.sticker.collection_id}"
+                    )
+                elif info.media:
                     detail = (
                         f"{info.media.mime_type} {info.media.size}B "
                         f"{info.media.width}x{info.media.height} "
@@ -173,7 +212,7 @@ async def main() -> int:
         for message in sent:
             info = describe(message)
             if info.is_media:
-                data = await app.download(message, destination=None)
+                data = await app.download(message, destination=None)  # bytes
                 print(f"downloaded {info.kind.value}: {len(data)} bytes")
                 break
 

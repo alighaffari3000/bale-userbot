@@ -3,7 +3,7 @@
 Media is bounced back by file id, so nothing is downloaded or re-uploaded.
 """
 
-from balekit import BaleApp, Config, MessageKind
+from bale_userbot import BaleApp, Config, MessageKind
 
 app = BaleApp(Config.from_env())
 
@@ -14,8 +14,16 @@ async def echo(message, client):
 
     if info.kind is MessageKind.TEXT:
         await message.answer(info.text)
+    elif info.kind is MessageKind.LOCATION:
+        await app.send_location(
+            info.location.latitude, info.location.longitude, info.chat_id
+        )
+    elif info.kind is MessageKind.CONTACT:
+        await app.send_contact(
+            info.contact.name or "?", list(info.contact.phones), info.chat_id
+        )
     elif info.is_media:
-        await app.resend(message)
+        await app.resend(message)          # stickers included: pointer copy
     elif info.kind is MessageKind.GIFT:
         await message.answer("gift received")
     else:

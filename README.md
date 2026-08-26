@@ -1,4 +1,4 @@
-# balekit
+# bale-userbot
 
 زیرساخت کار با **اکانت شخصی بله** روی پایتون. یک لایهٔ نازک روی
 [`BaleClient`](https://pypi.org/project/BaleClient/) که ورود/نشست، حلقهٔ رویداد،
@@ -11,7 +11,7 @@
 و می‌آیند.
 
 ```python
-from balekit import BaleApp, Config, MessageKind
+from bale_userbot import BaleApp, Config, MessageKind
 
 app = BaleApp(Config.from_env())
 
@@ -28,14 +28,17 @@ app.run()                                        # اتصال، هندشیک، r
 ## چرا یک لایه روی BaleClient؟
 
 `BaleClient` کار سنگین پروتکل را انجام می‌دهد. اما موقع ساختن روی آن، هر پروژه
-مجبور است این پنج چیز را از نو بنویسد — و سه‌تای اول باگ‌های واقعی کتابخانه‌اند
-که در همین ریپو تست دارند:
+مجبور است این‌ها را از نو بنویسد — و شش‌تای اول باگ‌های واقعی کتابخانه‌اند
+که در همین ریپو تست دارند (اولی و دومی روی اکانت واقعی تأیید شده‌اند):
 
-| مشکل در `BaleClient 1.0.9` | چه بلایی سرت می‌آورد | راه‌حل در balekit |
+| مشکل در `BaleClient 1.0.9` | چه بلایی سرت می‌آورد | راه‌حل در bale-userbot |
 |---|---|---|
+| والیدیتور `_check_empty` در `MessageContent` فیلد متن (`"15"`) را همیشه null می‌کند و پرچم `empty` (`"5"`) را با صرفِ حضور true | **هر پیام متنی دریافتی** (history و رویدادها) بدون متن و به‌شکل forward/unknown پارس می‌شود — تأییدشده روی اکانت واقعی | `patches.apply_wire_fixes()` هنگام import والیدیتور را با نسخهٔ درست عوض و مدل‌ها را rebuild می‌کند |
 | `Client._should_ignore` متد `list.remove()` را بدون آرگومان صدا می‌زند | هر echo از پیام‌های خودت `TypeError` می‌دهد و لیست pending هیچ‌وقت خالی نمی‌شود (نشت حافظه) | `KitClient` متد را درست override می‌کند + سقف ۵۱۲ آیدی |
 | همان متد برای رویدادهای غیرِ `message` همیشه «نادیده بگیر» برمی‌گرداند | ویرایش/حذف پیام و بقیهٔ رویدادها هرگز dispatch نمی‌شوند | همان override |
 | `AudioExt(album=...)` تگ‌ها را می‌اندازد (validatorِ before کلیدهای aliasی را با `None` بازنویسی می‌کند) — و `send_audio` دقیقاً همین کار را می‌کند | آلبوم/ژانر/نام قطعه بی‌صدا گم می‌شوند | `audio_ext()` از طریق aliasها می‌سازد؛ `send_media` وقتی تگ داری از مسیر امن می‌رود |
+| `ServiceMessage` هر دو فیلد متن و ext را الزامی می‌داند و `Thumbnail` هم w/h را — ولی خودِ `DocumentMessage` تامبِ ناقص را نگه می‌دارد | یک فیلد غایب کل `MessageContent` را می‌ترکاند؛ روی وب‌سوکت این استثنا بلعیده می‌شود و **کل آپدیت بی‌صدا گم می‌شود** | همان پچ، بلوک ناقص را null می‌کند تا بقیهٔ پیام برسد |
+| `set_reaction`/`remove_reaction`/`typing`/`stop_typing` با `Peer(type=chat_type)` خام ساخته می‌شوند، ولی `PeerType` فقط 0/1/2 دارد | ری‌اکشن یا «در حال تایپ» در ربات، سوپرگروه و کانال، *قبل از هر درخواست شبکه*، ValidationError می‌دهد | `react()` / `unreact()` / `set_typing()` peer را مثل بقیهٔ کتابخانه resolve می‌کنند |
 | دیسپچر با `inspect.iscoroutinefunction` تصمیم می‌گیرد | هندلری که یک شیء صدازدنی است (نه تابع) داخل thread executor بدون await رها می‌شود | `wrap_handler` همیشه یک coroutine function ثبت می‌کند |
 | آپدیت‌ها با `asyncio.create_task` پرتاب می‌شوند | استثنای هندلر همراه task بی‌صدا گم می‌شود | `wrap_handler` لاگ می‌کند و اختیاری `on_error` صدا می‌زند |
 
@@ -63,12 +66,17 @@ app.run()                                        # اتصال، هندشیک، r
 | فوروارد | ✅ `FORWARD` | — | — |
 | پیام سرویس | ✅ `SERVICE` (+متن) | — | — |
 | بستهٔ هدیه | ✅ `GIFT` | `client.send_gift` | — |
+| استیکر | ✅ `STICKER` (+id، مجموعه، دو رندیشن قابل دانلود) | ✅ `send_sticker` (از پیام دریافتی) | ✅ |
+| لوکیشن | ✅ `LOCATION` (+lat/lon) | ✅ `send_location` | — |
+| کارت مخاطب | ✅ `CONTACT` (+نام، شماره‌ها، ایمیل‌ها) | ✅ `send_contact` | — |
 
-**لوکیشن، مخاطب (contact card) و استیکر پشتیبانی نمی‌شوند** — نه در balekit و نه
-در `BaleClient 1.0.9`. در `MessageContent` این نسخه فقط `document`، `text`،
-`service_message`، `bot_message` و `gift` وجود دارد؛ هیچ فیلد geo/contact/sticker
-در پروتکلِ پیاده‌سازی‌شده نیست. اگر لازمشان داری، باید اول در خودِ کتابخانه (یا یک
-فورک) به پروتکل اضافه شوند؛ balekit چیزی را که لایهٔ زیرین ندارد نمی‌تواند بسازد.
+`BaleClient 1.0.9` برای این سه نوع آخر هیچ مدلی ندارد: روی سیم در فیلدهای
+protobufی می‌آیند که کتابخانه اعلامشان نکرده (فیلد `7` یک پیام JSON با
+`dataType` است — لوکیشن و مخاطب — و فیلد `12` استیکر). دو چیز بدون فورک
+کارشان را ممکن می‌کند: `BaleObject` فیلدهای ناشناخته را در `model_extra` نگه
+می‌دارد و انکودر protobuf هم schema-less است. شماره‌فیلدها با
+`tools/probe_content.py` از ترافیک واقعی کشف شده‌اند؛ `describe()` آن‌ها را
+مثل هر نوع دیگری می‌فهمد و `bale_userbot.extras` سمت ارسالشان است.
 
 ---
 
@@ -85,8 +93,9 @@ Python 3.11+ (الزام خود `BaleClient`).
 
 ```bash
 cp .env.example .env
-python -m balekit login                # شماره → کد پیامکی → data/session.bale
-python -m balekit whoami               # نشست ذخیره‌شده مال کدام اکانت است
+python -m bale_userbot login                # شماره → کد پیامکی → data/session.bale
+python -m bale_userbot whoami               # نشست ذخیره‌شده مال کدام اکانت است
+python -m bale_userbot whoami --offline     # بدون اتصال؛ فقط آیدی
 ```
 
 از این به بعد نشست از فایل خوانده می‌شود و OTP لازم نیست.
@@ -115,7 +124,11 @@ await app.start()    # داخل event loop خودت
 
 **`describe(message) -> MessageInfo`** — نمای صاف پیام:
 `kind`, `text`, `caption`, `body`, `media`, `has_keyboard`, `is_forward`,
-`reply_to_id`, `sender_id`, `chat_id`, `chat_type`, `service_text`.
+`reply_to_id`, `sender_id`, `chat_id`, `chat_type`, `service_text`,
+`location` (`LocationInfo`), `contact` (`ContactInfo`), `sticker`
+(`StickerInfo`), `json_payload` (بدنهٔ خامِ هر پیام JSON — برای dataTypeهایی
+که bale-userbot هنوز نمی‌شناسد؛ `kind` آن‌ها `UNKNOWN` می‌ماند ولی payload در
+دسترس است).
 و `MediaInfo`: `file_id`, `access_hash`, `mime_type`, `name`, `size`,
 `width`, `height`, `duration`, `has_thumb`, `album`, `genre`, `track`.
 
@@ -128,7 +141,45 @@ await app.reply_with(message, "doc.pdf", caption="…")
 await app.resend(message, other_chat_id)             # کپی بدون دانلود/آپلود
 data  = await app.download(message, destination=None)   # bytes
 path  = await app.download(message)                     # فایل در پوشهٔ دانلود
+
+await app.send_location(35.6892, 51.3890, chat_id)
+await app.send_contact("Ali", ["0912…"], chat_id)
+await app.send_sticker(received_sticker_message, chat_id)   # یا info.sticker
+
+# همان‌ها در پاسخ به یک پیام — chat_id و chat_type از خود پیام گرفته می‌شوند
+await app.reply_location(message, 35.6892, 51.3890)
+await app.reply_contact(message, "Ali", ["0912…"])
+await app.reply_sticker(message, received_sticker_message)
+await app.reply_content(message, any_message_content)
 ```
+
+`app.download(message)` فایل را در پوشهٔ دانلود می‌نویسد و `Path` می‌دهد؛
+`destination=None` صریح، خودِ بایت‌ها را برمی‌گرداند. اسم فایل پیش‌فرض با نوع
+پیام ساخته می‌شود (`sticker-<id>.png`, `voice-<id>.ogg`).
+
+**ری‌اکشن و «در حال تایپ»:**
+
+```python
+await app.react(message, "👍")
+await app.unreact(message, "👍")
+await app.typing(chat_id, mode=TypingMode.SENDINGPHOTO)
+await app.typing(chat_id, stop=True)
+```
+
+برخلاف متدهای خود `BaleClient`، این‌ها در ربات/سوپرگروه/کانال هم کار می‌کنند
+(جدول بالا).
+
+استیکر یعنی ارجاع به یک مجموعهٔ سمت سرور؛ ساختن استیکر جدید از این‌جا ممکن
+نیست — همانی را می‌فرستی که قبلاً دریافت (یا در history دیده‌ای).
+
+`resend` هم لوکیشن و مخاطب و استیکر را عیناً کپی می‌کند (بدون بازسازی از
+`LocationInfo`/`ContactInfo`، تا هیچ زیرفیلدِ مدل‌نشده‌ای گم نشود).
+
+بیلدرهای سطح پایین هم export شده‌اند: `location_content` / `contact_content`
+/ `sticker_content` / `json_content` / `json_block_content` یک
+`MessageContent` آماده می‌سازند و `send_content` هر `MessageContent`
+دلخواهی را می‌فرستد — برای وقتی که بله نوع تازه‌ای اضافه کرد و نخواستی
+منتظر bale-userbot بمانی.
 
 **فیلترها:** `Kind(...)`, `IsMedia()`, `NotSelf()`, `FromUsers(...)`,
 `InChats(...)`, `ChatScope(private=, groups=)` — کنار فیلترهای خود
@@ -156,12 +207,14 @@ path  = await app.download(message)                     # فایل در پوشه
 ## تست
 
 ```bash
-python -m pytest tests -q      # 76 تست، بدون شبکه و بدون اکانت
+python -m pytest tests -q      # 155 تست، بدون شبکه و بدون اکانت
 ```
 
 تست‌ها با اشیای واقعی `baleclient.types` ساخته می‌شوند (نه mock پروتکل): هر شکل
-محتوا یک‌بار از مسیر `Dispatcher → filter → handler` عبور داده می‌شود. دو تست
-عمداً باگ‌های بالادست را assert می‌کنند؛ اگر روزی fail شدند یعنی `BaleClient`
+محتوا یک‌بار از مسیر `Dispatcher → filter → handler` عبور داده می‌شود، و
+`tests/test_wire.py` پیام‌های کامل را از روی دیکشنری‌های عددیِ همان چیزی که
+روی سیم می‌آید پارس می‌کند. چند تست عمداً باگ‌های بالادست (و رفعشان در
+`patches.py`) را assert می‌کنند؛ اگر روزی fail شدند یعنی `BaleClient`
 درستشان کرده و می‌شود workaround را حذف کرد.
 
 **تست زنده** (نیازمند اکانت واقعی — در CI اجرا نمی‌شود):
@@ -171,8 +224,13 @@ python tools/live_check.py            # به «پیام‌های ذخیره‌ش
 python tools/live_check.py --chat ID --keep
 ```
 
-هر نوع پیام را می‌فرستد، از history می‌خواند، دوباره classify می‌کند، یکی را
-دانلود می‌کند و در پایان پیام‌های خودش را پاک می‌کند.
+هر نوع پیام را می‌فرستد (شامل لوکیشن، مخاطب و استیکر)، از history می‌خواند،
+دوباره classify می‌کند، یکی را دانلود می‌کند و در پایان پیام‌های خودش را پاک
+می‌کند.
+
+`tools/probe_content.py` هم فقط‌خواندنی است: هر پیامی را که `describe()`
+نمی‌شناسد یا فیلد اضافه دارد با شماره‌فیلدهای خام چاپ می‌کند — همان ابزاری که
+لوکیشن/مخاطب/استیکر با آن کشف شدند.
 
 ---
 
@@ -194,8 +252,10 @@ python tools/live_check.py --chat ID --keep
   بدون اطلاع تغییر کند؛ به همین دلیل نسخهٔ `BaleClient` پین شده است.
 - اتوماسیون روی اکانت شخصی ممکن است خلاف قواعد سرویس تلقی شود؛ ریسک تعلیق
   اکانت واقعی است.
-- لوکیشن/مخاطب/استیکر: پشتیبانی نمی‌شود (بالاتر توضیح داده شد).
 - ابعاد ویدئو و مدت زمان به‌صورت خودکار استخراج نمی‌شوند (نیازمند ffprobe است)؛
   اگر می‌خواهی پیش‌نمایش درست باشد خودت `width`/`height`/`duration` را بده.
 - `MessageKind.FORWARD` یعنی «استاب خالی»؛ محتوای اصلی فوروارد در پیام نقل‌شده
   (`message.replied_to`) است.
+- `patches.py` هنگام import، والیدیتورهای `MessageContent` را عوض می‌کند. این
+  تغییر سراسری و در سطح فرآیند است: اگر در همان پروسه کد دیگری مستقیم روی
+  `BaleClient` کار می‌کند، رفتار درست‌شده را می‌بیند (نه رفتار باگ‌دار را).

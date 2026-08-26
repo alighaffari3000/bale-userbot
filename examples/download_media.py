@@ -1,6 +1,6 @@
 """Save every attachment that arrives into the configured download directory."""
 
-from balekit import BaleApp, Config, IsMedia
+from bale_userbot import BaleApp, Config, IsMedia
 
 app = BaleApp(Config.from_env())
 

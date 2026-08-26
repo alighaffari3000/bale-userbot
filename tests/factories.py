@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from baleclient.enums import ChatType
 from baleclient.types import (
     AudioExt,
@@ -152,6 +154,60 @@ def service_content(text: str = "user joined") -> MessageContent:
 def forward_content() -> MessageContent:
     # A forward arrives as an empty stub; the payload rides in the quoted message.
     return MessageContent.model_validate({"5": True})
+
+
+def location_json(latitude: float = 35.7258, longitude: float = 51.4403) -> str:
+    return json.dumps(
+        {
+            "dataType": "location",
+            "data": {"location": {"latitude": latitude, "longitude": longitude}},
+        }
+    )
+
+
+def contact_json() -> str:
+    # Phones arrive duplicated from the app, exactly as captured on the wire.
+    return json.dumps(
+        {
+            "dataType": "contact",
+            "data": {
+                "contact": {
+                    "name": "Azadeh",
+                    "emails": [],
+                    "phones": ["0939", "0939", "0912"],
+                }
+            },
+        }
+    )
+
+
+def json_content(text: str) -> MessageContent:
+    """A raw JSON message, as decoded off the wire (content field 7)."""
+    return MessageContent.model_validate({"7": {"1": text}})
+
+
+#: A sticker exactly as captured from live traffic (content field 12).
+STICKER_WIRE = {
+    "1": {"1": 2086508713},
+    "3": {
+        "1": {"1": 5519507489348001536, "2": 445871464, "3": {"1": 1}},
+        "2": 500,
+        "3": 500,
+        "4": 250629,
+    },
+    "4": {
+        "1": {"1": 4466064368626310913, "2": 445871464, "3": {"1": 1}},
+        "2": 250,
+        "3": 250,
+        "4": 87786,
+    },
+    "5": {"1": 772269187},
+    "6": {},
+}
+
+
+def sticker_content() -> MessageContent:
+    return MessageContent.model_validate({"12": STICKER_WIRE})
 
 
 def with_keyboard(inner: MessageContent) -> MessageContent:

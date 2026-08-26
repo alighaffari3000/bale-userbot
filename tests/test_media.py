@@ -6,9 +6,9 @@ import pytest
 from baleclient.enums import ChatType
 from baleclient.types import DocumentMessage, FileInput
 
-from balekit import MessageKind, detect_kind, suggest_filename
-from balekit.content import MediaInfo, describe
-from balekit.media import audio_ext, download, resend, send_media
+from bale_userbot import MessageKind, detect_kind, suggest_filename
+from bale_userbot.content import MediaInfo, describe
+from bale_userbot.media import audio_ext, download, resend, send_media
 from tests import factories as f
 
 
@@ -66,6 +66,16 @@ PNG = (
         ("application/pdf", "a.pdf", MessageKind.DOCUMENT),
         (None, "a.png", MessageKind.PHOTO),
         (None, "a.unknown", MessageKind.DOCUMENT),
+        # Container types: BaleClient's byte sniffer reports application/ogg
+        # for an Ogg file, so the extension has to break the tie.
+        ("application/ogg", "a.ogg", MessageKind.AUDIO),
+        ("application/x-matroska", "a.mkv", MessageKind.VIDEO),
+        (None, "a.opus", MessageKind.AUDIO),
+        # A real document must not be dragged into a media kind.
+        ("application/pdf", "a.pdf", MessageKind.DOCUMENT),
+        ("application/zip", "a.zip", MessageKind.DOCUMENT),
+        # Nothing to go on: stays a document rather than guessing.
+        ("application/ogg", None, MessageKind.DOCUMENT),
     ],
 )
 def test_detect_kind(mime, name, kind):

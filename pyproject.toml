@@ -1,6 +1,6 @@
 [project]
-name = "balekit"
-version = "0.2.0"
+name = "bale-userbot"
+version = "0.4.0"
 description = "Infrastructure layer for building on a personal Bale account with BaleClient"
 requires-python = ">=3.11,<3.14"
 dependencies = [
@@ -13,7 +13,7 @@ dependencies = [
 media = ["Pillow>=10.0"]
 
 [project.scripts]
-balekit = "balekit.cli:main"
+bale-userbot = "bale_userbot.cli:main"
 
 [dependency-groups]
 dev = [
@@ -38,4 +38,4 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["balekit"]
+packages = ["bale_userbot"]

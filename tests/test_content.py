@@ -3,8 +3,8 @@
 import pytest
 from baleclient.enums import ChatType
 
-from balekit import MessageKind, describe
-from balekit.content import kind_of_document
+from bale_userbot import MessageKind, describe
+from bale_userbot.content import kind_of_document
 from tests import factories as f
 
 
@@ -18,6 +18,9 @@ from tests import factories as f
         (f.voice(), MessageKind.VOICE),
         (f.audio(), MessageKind.AUDIO),
         (f.plain_file(), MessageKind.DOCUMENT),
+        (f.json_content(f.location_json()), MessageKind.LOCATION),
+        (f.json_content(f.contact_json()), MessageKind.CONTACT),
+        (f.sticker_content(), MessageKind.STICKER),
         (f.gift_content(), MessageKind.GIFT),
         (f.service_content(), MessageKind.SERVICE),
         (f.forward_content(), MessageKind.FORWARD),
@@ -121,3 +124,72 @@ def test_dict_filename_does_not_crash():
 def test_service_text_is_exposed():
     info = describe(f.message(f.service_content("someone joined")))
     assert info.service_text == "someone joined"
+
+
+# --- location / contact / sticker (wire fields BaleClient does not model) --
+
+
+def test_location_coordinates_are_parsed():
+    info = describe(f.message(f.json_content(f.location_json(35.5, 51.25))))
+    assert info.kind is MessageKind.LOCATION
+    assert (info.location.latitude, info.location.longitude) == (35.5, 51.25)
+    assert not info.is_media
+
+
+def test_contact_card_is_parsed_and_deduplicated():
+    info = describe(f.message(f.json_content(f.contact_json())))
+    assert info.kind is MessageKind.CONTACT
+    assert info.contact.name == "Azadeh"
+    assert info.contact.phones == ("0939", "0912")
+    assert info.contact.emails == ()
+
+
+def test_unknown_json_data_type_stays_unknown():
+    import json
+
+    payload = json.dumps({"dataType": "poll", "data": {}})
+    info = describe(f.message(f.json_content(payload)))
+    assert info.kind is MessageKind.UNKNOWN
+
+
+def test_json_content_collapsed_to_bare_string_still_parses():
+    # The schema-less decoder may hand field 7 as a string, not {"1": str}.
+    from baleclient.types import MessageContent
+
+    content = MessageContent.model_validate({"7": f.location_json(1.5, 2.5)})
+    info = describe(f.message(content))
+    assert info.kind is MessageKind.LOCATION
+    assert info.location.latitude == 1.5
+
+
+def test_unknown_data_type_exposes_json_payload():
+    import json
+
+    payload = json.dumps({"dataType": "poll", "data": {"q": "?"}})
+    info = describe(f.message(f.json_content(payload)))
+    assert info.kind is MessageKind.UNKNOWN
+    assert info.json_payload == {"dataType": "poll", "data": {"q": "?"}}
+
+
+def test_invalid_json_payload_never_raises():
+    info = describe(f.message(f.json_content("{not json")))
+    assert info.kind is MessageKind.UNKNOWN
+
+
+def test_sticker_fields_and_media_mapping():
+    info = describe(f.message(f.sticker_content()))
+    assert info.kind is MessageKind.STICKER
+    sticker = info.sticker
+    assert sticker.sticker_id == 2086508713
+    assert sticker.collection_id == 772269187
+    assert sticker.collection_access_hash is None  # "6": {} means unset
+    assert (sticker.image512.width, sticker.image512.height) == (500, 500)
+    assert (sticker.image256.width, sticker.image256.height) == (250, 250)
+    assert sticker.image is sticker.image512
+
+    # Stickers are downloadable media: the 512px rendition backs `media`.
+    assert info.is_media
+    assert info.media.file_id == sticker.image512.file_id
+    assert info.media.access_hash == sticker.image512.access_hash
+    assert info.media.mime_type == "image/png"
+    assert info.media.size == 250629

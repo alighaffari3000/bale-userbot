@@ -6,9 +6,15 @@ import pytest
 from baleclient import Dispatcher
 from baleclient.enums import ChatType
 
-from balekit import BaleApp, Config, IsMedia, Kind, MessageKind
-from balekit.client import MAX_PENDING_IDS, KitClient
-from balekit.routing import ChatScope, ChatSerializer, FromUsers, NotSelf, wrap_handler
+from bale_userbot import BaleApp, Config, IsMedia, Kind, MessageKind
+from bale_userbot.client import MAX_PENDING_IDS, KitClient
+from bale_userbot.routing import (
+    ChatScope,
+    ChatSerializer,
+    FromUsers,
+    NotSelf,
+    wrap_handler,
+)
 from tests import factories as f
 
 
