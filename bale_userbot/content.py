@@ -373,9 +373,7 @@ def describe(message: Message) -> MessageInfo:
         elif payload.get("dataType") == "contact":
             contact = _contact_of(data)
             kind = MessageKind.CONTACT if contact else MessageKind.UNKNOWN
-    elif (
-        sticker := _sticker_of(_extra(content).get(STICKER_CONTENT_KEY))
-    ) is not None:
+    elif (sticker := _sticker_of(_extra(content).get(STICKER_CONTENT_KEY))) is not None:
         kind = MessageKind.STICKER
         image = sticker.image
         media = MediaInfo(

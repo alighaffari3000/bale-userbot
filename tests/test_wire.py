@@ -75,7 +75,7 @@ def test_location_message_from_the_wire():
                     "latitude": 35.72580936520509,
                     "longitude": 51.440315432846546,
                 }
-            }
+            },
         }
     )
     info = describe(wire_message({"7": {"1": payload}, "5": 0}))

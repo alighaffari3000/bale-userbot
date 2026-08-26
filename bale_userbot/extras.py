@@ -115,9 +115,7 @@ def sticker_content(sticker: Message | StickerInfo) -> MessageContent:
         content, _ = unwrap(sticker.content)
         block = (content.model_extra or {}).get(STICKER_CONTENT_KEY)
         if not isinstance(block, dict):
-            raise ValueError(
-                f"message {sticker.message_id} carries no sticker to send"
-            )
+            raise ValueError(f"message {sticker.message_id} carries no sticker to send")
         return MessageContent.model_validate({STICKER_CONTENT_KEY: block})
 
     if sticker.image is None:
@@ -207,7 +205,10 @@ async def send_location(
 ) -> Message:
     """Share a map point."""
     return await send_content(
-        client, location_content(latitude, longitude), chat_id, chat_type,
+        client,
+        location_content(latitude, longitude),
+        chat_id,
+        chat_type,
         reply_to=reply_to,
     )
 
@@ -224,7 +225,10 @@ async def send_contact(
 ) -> Message:
     """Share a contact card."""
     return await send_content(
-        client, contact_content(name, phones, emails), chat_id, chat_type,
+        client,
+        contact_content(name, phones, emails),
+        chat_id,
+        chat_type,
         reply_to=reply_to,
     )
 

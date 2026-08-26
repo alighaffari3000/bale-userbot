@@ -31,9 +31,12 @@ async def test_three_messages_in_one_chat_stay_ordered():
     await asyncio.gather(*tasks)
 
     assert order == [
-        "start1", "end1",
-        "start2", "end2",
-        "start3", "end3",
+        "start1",
+        "end1",
+        "start2",
+        "end2",
+        "start3",
+        "end3",
     ]
 
 
@@ -42,10 +45,7 @@ async def test_locks_are_released_once_a_chat_drains():
     wrapped = wrap_handler(make_recorder([]), serializer=serializer)
 
     await asyncio.gather(
-        *(
-            wrapped(f.message(f.text_content(), message_id=i), None)
-            for i in range(1, 6)
-        )
+        *(wrapped(f.message(f.text_content(), message_id=i), None) for i in range(1, 6))
     )
     assert serializer.tracked_chats == 0
 

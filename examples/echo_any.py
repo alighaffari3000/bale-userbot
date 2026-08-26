@@ -23,7 +23,7 @@ async def echo(message, client):
             info.contact.name or "?", list(info.contact.phones), info.chat_id
         )
     elif info.is_media:
-        await app.resend(message)          # stickers included: pointer copy
+        await app.resend(message)  # stickers included: pointer copy
     elif info.kind is MessageKind.GIFT:
         await message.answer("gift received")
     else:

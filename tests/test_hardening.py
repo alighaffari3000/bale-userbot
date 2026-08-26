@@ -36,10 +36,10 @@ def wire(data: dict) -> MessageContent:
 @pytest.mark.parametrize(
     "text_field",
     [
-        {},               # empty submessage
-        {"2": 3},         # submessage without the value field
-        {"1": 123},       # value present but not a string
-        5,                # not a submessage at all
+        {},  # empty submessage
+        {"2": 3},  # submessage without the value field
+        {"1": 123},  # value present but not a string
+        5,  # not a submessage at all
         [],
     ],
 )
@@ -130,9 +130,7 @@ def test_url_thumbnail_is_skipped_not_passed_to_fileinput():
 
 async def test_resend_of_a_photo_with_a_url_thumbnail_does_not_crash():
     client = FakeBoth()
-    content = MessageContent(
-        document=_document_with_thumb("https://cdn.example/t.jpg")
-    )
+    content = MessageContent(document=_document_with_thumb("https://cdn.example/t.jpg"))
     await resend(client, f.message(content), f.PEER_ID, ChatType.PRIVATE)
     assert client.calls[0][0] == "send_photo"
     assert "cover_thumb" not in client.calls[0][1]
