@@ -193,3 +193,58 @@ def test_sticker_fields_and_media_mapping():
     assert info.media.access_hash == sticker.image512.access_hash
     assert info.media.mime_type == "image/png"
     assert info.media.size == 250629
+
+
+def test_forward_carries_the_quoted_original():
+    # The whole point of the repair: an empty stub whose text lives next door.
+    info = describe(f.forwarded(f.text_content("پنل ۵۵۰ وات موجود")))
+
+    assert info.kind is MessageKind.FORWARD
+    assert info.is_forward
+    assert info.text is None and info.caption is None
+    assert info.body == "پنل ۵۵۰ وات موجود"
+    assert info.searchable_text == "پنل ۵۵۰ وات موجود"
+
+    quoted = info.quoted
+    assert quoted.kind is MessageKind.TEXT
+    assert quoted.text == "پنل ۵۵۰ وات موجود"
+    assert quoted.message_id == 77
+    assert quoted.sender_id == f.PEER_ID
+
+
+def test_forward_names_the_chat_it_came_from():
+    info = describe(f.forwarded(f.text_content("hi"), origin_id=999, chat_id=5))
+    assert info.chat_id == 5
+    assert info.quoted.chat_id == 999
+
+
+def test_forwarded_media_keeps_caption_and_file():
+    info = describe(f.forwarded(f.photo(caption="لیست قیمت")))
+
+    assert info.body == "لیست قیمت"
+    assert info.quoted.kind is MessageKind.PHOTO
+    assert info.quoted.media.file_id == 9001
+    # The stub itself has no attachment; only the quote does.
+    assert info.media is None
+
+
+def test_reply_quotes_without_borrowing_the_parent_text():
+    info = describe(f.replying(f.text_content("ممنون"), f.text_content("پنل ۵۵۰")))
+
+    assert info.kind is MessageKind.TEXT
+    assert info.body == "ممنون"
+    # A reply must not answer a search for its parent's words.
+    assert info.searchable_text == "ممنون"
+    assert info.quoted.text == "پنل ۵۵۰"
+    assert info.reply_to_id == 77
+
+
+def test_message_id_of_a_quote_is_unwrapped():
+    # QuotedMessage.message_id is an IntValue; reply_to_id must be a plain int.
+    assert describe(f.forwarded(f.text_content("x"))).reply_to_id == 77
+
+
+def test_quoted_is_none_when_nothing_was_quoted():
+    info = describe(f.message(f.text_content("standalone")))
+    assert info.quoted is None
+    assert info.reply_to_id is None

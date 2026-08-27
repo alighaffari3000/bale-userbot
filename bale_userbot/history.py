@@ -258,10 +258,18 @@ async def load_history(
 
 
 def message_record(info: MessageInfo) -> dict[str, Any]:
-    """One message as a JSON-serializable dict."""
+    """One message as a JSON-serializable dict.
+
+    `body` is written out even though it is derived, because a forward keeps
+    its text in `quoted` and a caller reading `text`/`caption` alone would
+    conclude the message was empty.
+    """
     record = asdict(info)
     record["kind"] = str(info.kind)
     record["chat_type"] = int(info.chat_type)
+    if info.quoted is not None:
+        record["quoted"]["kind"] = str(info.quoted.kind)
+    record["body"] = info.body
     return record
 
 

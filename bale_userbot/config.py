@@ -36,6 +36,8 @@ class Config:
     session_file: Path = field(default_factory=lambda: Path("./data/session.bale"))
     proxy: str | None = None
     download_dir: Path = field(default_factory=lambda: Path("./data/downloads"))
+    #: Where `sync` caches messages so `search` can run without the network.
+    store_file: Path = field(default_factory=lambda: Path("./data/messages.db"))
     allowed_user_ids: frozenset[int] = frozenset()
     handle_private: bool = True
     handle_groups: bool = False
@@ -64,6 +66,9 @@ class Config:
             proxy=(os.getenv("BALE_PROXY") or "").strip() or None,
             download_dir=Path(
                 os.getenv("BALE_DOWNLOAD_DIR", "./data/downloads")
+            ).expanduser(),
+            store_file=Path(
+                os.getenv("BALE_STORE_FILE", "./data/messages.db")
             ).expanduser(),
             allowed_user_ids=_ids("BALE_ALLOWED_USER_IDS"),
             handle_private=_bool("HANDLE_PRIVATE", True),

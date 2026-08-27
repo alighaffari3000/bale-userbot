@@ -22,6 +22,7 @@ from .content import (  # noqa: E402
     MediaInfo,
     MessageInfo,
     MessageKind,
+    QuotedInfo,
     StickerImage,
     StickerInfo,
     describe,
@@ -71,6 +72,7 @@ from .history import (  # noqa: E402
     message_records,
     to_timestamp,
 )
+from .limiter import RateLimiter  # noqa: E402
 from .media import (  # noqa: E402
     detect_kind,
     download,
@@ -112,6 +114,19 @@ from .routing import (  # noqa: E402
     NotSelf,
     wrap_handler,
 )
+from .store import (  # noqa: E402
+    MessageStore,
+    SearchHit,
+    SearchResult,
+    SyncState,
+    normalize,
+)
+from .sync import (  # noqa: E402
+    SweepReport,
+    SyncReport,
+    sync_chat,
+    sync_chats,
+)
 
 __version__ = "1.0.0"
 
@@ -135,12 +150,19 @@ __all__ = (
     "MembershipChanges",
     "MessageInfo",
     "MessageKind",
+    "MessageStore",
     "NotSelf",
     "PERMISSION_FLAGS",
+    "QuotedInfo",
+    "RateLimiter",
+    "SearchHit",
+    "SearchResult",
     "SessionMissingError",
     "StickerImage",
     "StickerInfo",
-    "__version__",
+    "SweepReport",
+    "SyncReport",
+    "SyncState",
     "allow",
     "banned",
     "contact_content",
@@ -176,6 +198,7 @@ __all__ = (
     "message_record",
     "message_records",
     "mute",
+    "normalize",
     "permission_names",
     "permissions_of",
     "pin",
@@ -197,6 +220,8 @@ __all__ = (
     "set_typing",
     "sticker_content",
     "suggest_filename",
+    "sync_chat",
+    "sync_chats",
     "to_timestamp",
     "unban",
     "unmute",
@@ -205,4 +230,5 @@ __all__ = (
     "unreact",
     "watch_membership",
     "wrap_handler",
+    "__version__",
 )

@@ -15,12 +15,14 @@ from bale_userbot import BaleApp, Config, MessageKind
 
 app = BaleApp(Config.from_env())
 
+
 @app.on_message(kinds=[MessageKind.PHOTO, MessageKind.VIDEO])
 async def save_media(message, client):
-    path = await app.download(message)          # هر نوع فایلی، یک متد
+    path = await app.download(message)  # هر نوع فایلی، یک متد
     await message.reply(f"saved {path.name}")
 
-app.run()                                        # اتصال، هندشیک، reconnect
+
+app.run()  # اتصال، هندشیک، reconnect
 ```
 
 ---
@@ -127,6 +129,31 @@ python -m bale_userbot link 12345 [--revoke]
 برمی‌گردانند. لاگ‌های این دستورها روی stderr می‌روند تا خروجی JSON روی stdout
 قابل pipe کردن بماند.
 
+### جست‌وجو در آرشیو
+
+`sync` تاریخچه را یک‌بار در یک فایل SQLite محلی می‌ریزد و `search` بعد از آن
+**بدون شبکه** جواب می‌دهد — پرسیدن دوازده سؤال از آرشیو یعنی دوازده کوئری
+SQLite، نه دوازده جاروی یک اکانت rate-limit شده.
+
+```bash
+python -m bale_userbot sync                            # همهٔ گروه‌ها، ۳۰ روز اخیر
+python -m bale_userbot sync 12345 67890 --since 2026-08-01
+python -m bale_userbot sync --full                     # پنجره را دوباره بخوان
+
+python -m bale_userbot search "پنل 550"                # کلمات AND می‌شوند
+python -m bale_userbot search "پنل\s*(4\d\d|500)" --regex
+python -m bale_userbot search "اینورتر" --chat 12345 --since 2026-08-20
+python -m bale_userbot store                           # چه چیزی sync شده است
+```
+
+`sync` دوم هر گروه **افزایشی** است: از جدیدترین پیامِ ذخیره‌شده به بعد را
+می‌خواند، نه از `--since`. سه پیام تازه یعنی سه پیام، نه چهار هزار.
+
+جست‌وجو روی متنِ **نرمال‌شده** انجام می‌شود، پس `۴۵۰` و `450`، `کیلو‌وات` و
+`کیلووات`، `ياسوج` و `یاسوج` یکی حساب می‌شوند — بدون این، جست‌وجوی «پنل 450»
+روی آرشیوی که «پنل ۴۵۰» نوشته، بی‌صدا صفر برمی‌گرداند و این دقیقاً شبیه «کسی
+نمی‌فروشد» به نظر می‌رسد.
+
 ---
 
 ## API
@@ -136,23 +163,27 @@ python -m bale_userbot link 12345 [--revoke]
 ```python
 app = BaleApp(Config.from_env())
 
-@app.on_message(kinds=[MessageKind.TEXT])          # فیلتر بر اساس نوع
+
+@app.on_message(kinds=[MessageKind.TEXT])  # فیلتر بر اساس نوع
 async def on_text(message, client): ...
 
-@app.on_message(IsMedia(), FromUsers(123, 456))     # فیلترهای دلخواه
+
+@app.on_message(IsMedia(), FromUsers(123, 456))  # فیلترهای دلخواه
 async def on_media(message, client): ...
 
-app.run()                            # مسدودکننده
-await app.start()                    # داخل event loop خودت
-await app.start(background=True)     # فقط وصل شو و برگرد — برای اسکریپت یک‌باره
+
+app.run()  # مسدودکننده
+await app.start()  # داخل event loop خودت
+await app.start(background=True)  # فقط وصل شو و برگرد — برای اسکریپت یک‌باره
 ```
 
 گیت‌های سطح config (خصوصی/گروه، allowlist، پیام‌های خودت) قبل از فیلترهای تو
 اعمال می‌شوند.
 
 **`describe(message) -> MessageInfo`** — نمای صاف پیام:
-`kind`, `text`, `caption`, `body`, `media`, `has_keyboard`, `is_forward`,
-`reply_to_id`, `sender_id`, `chat_id`, `chat_type`, `service_text`,
+`kind`, `text`, `caption`, `body`, `searchable_text`, `media`, `has_keyboard`,
+`is_forward`, `quoted` (`QuotedInfo`), `reply_to_id`, `sender_id`, `chat_id`,
+`chat_type`, `service_text`,
 `location` (`LocationInfo`), `contact` (`ContactInfo`), `sticker`
 (`StickerInfo`), `json_payload` (بدنهٔ خامِ هر پیام JSON — برای dataTypeهایی
 که bale-userbot هنوز نمی‌شناسد؛ `kind` آن‌ها `UNKNOWN` می‌ماند ولی payload در
@@ -163,16 +194,16 @@ await app.start(background=True)     # فقط وصل شو و برگرد — بر
 **ارسال و دریافت:**
 
 ```python
-await app.send("photo.jpg", chat_id)                 # نوع از روی فایل تشخیص داده می‌شود
+await app.send("photo.jpg", chat_id)  # نوع از روی فایل تشخیص داده می‌شود
 await app.send(raw_bytes, chat_id, name="a.mp3", album="Album")
 await app.reply_with(message, "doc.pdf", caption="…")
-await app.resend(message, other_chat_id)             # کپی بدون دانلود/آپلود
-data  = await app.download(message, destination=None)   # bytes
-path  = await app.download(message)                     # فایل در پوشهٔ دانلود
+await app.resend(message, other_chat_id)  # کپی بدون دانلود/آپلود
+data = await app.download(message, destination=None)  # bytes
+path = await app.download(message)  # فایل در پوشهٔ دانلود
 
 await app.send_location(35.6892, 51.3890, chat_id)
 await app.send_contact("Ali", ["0912…"], chat_id)
-await app.send_sticker(received_sticker_message, chat_id)   # یا info.sticker
+await app.send_sticker(received_sticker_message, chat_id)  # یا info.sticker
 
 # همان‌ها در پاسخ به یک پیام — chat_id و chat_type از خود پیام گرفته می‌شوند
 await app.reply_location(message, 35.6892, 51.3890)
@@ -212,14 +243,14 @@ await app.typing(chat_id, stop=True)
 **گروه‌ها و اعضا:**
 
 ```python
-count  = await app.member_count(chat_id)          # فقط تعداد — یک درخواست
-group  = await app.group(chat_id)                 # GroupInfo: عنوان، مالک، نوع، تعداد
-members = await app.members(chat_id)              # همهٔ اعضا (id و نقش)
-members = await app.members(chat_id, profiles=True)   # + نام و یوزرنیم
-admins  = await app.admins(chat_id)               # ادمین‌ها و مالک (فیلتر سمت سرور)
-groups  = await app.groups()                      # همهٔ گروه/کانال‌های این اکانت
+count = await app.member_count(chat_id)  # فقط تعداد — یک درخواست
+group = await app.group(chat_id)  # GroupInfo: عنوان، مالک، نوع، تعداد
+members = await app.members(chat_id)  # همهٔ اعضا (id و نقش)
+members = await app.members(chat_id, profiles=True)  # + نام و یوزرنیم
+admins = await app.admins(chat_id)  # ادمین‌ها و مالک (فیلتر سمت سرور)
+groups = await app.groups()  # همهٔ گروه/کانال‌های این اکانت
 
-async for m in app.iter_members(chat_id):         # گروه بزرگ، بدون بارِ حافظه
+async for m in app.iter_members(chat_id):  # گروه بزرگ، بدون بارِ حافظه
     ...
 
 members = await app.hydrate_profiles(old_snapshot)  # اسنپ‌شات ذخیره‌شده را نام‌دار کن
@@ -253,9 +284,9 @@ members = await app.hydrate_profiles(old_snapshot)  # اسنپ‌شات ذخیر
 **ذخیره‌سازی — مرز کار ما:** `export_members` داده می‌دهد، نه فایل.
 
 ```python
-group, rows = await app.export_members(chat_id)   # rows: list[dict] تخت و JSON-پذیر
-json.dump(rows, open("members.json", "w"))        # کار برنامهٔ تو
-db.executemany("INSERT …", rows)                  #     ← نه کار زیرساخت
+group, rows = await app.export_members(chat_id)  # rows: list[dict] تخت و JSON-پذیر
+json.dump(rows, open("members.json", "w"))  # کار برنامهٔ تو
+db.executemany("INSERT …", rows)  #     ← نه کار زیرساخت
 ```
 
 هر ردیف `member.as_dict()` است به‌علاوهٔ `group_id`/`group_title`/
@@ -266,7 +297,7 @@ db.executemany("INSERT …", rows)                  #     ← نه کار زیر
 
 ```python
 changes, current = await app.watch_membership(chat_id, previous_snapshot)
-if changes:                              # False وقتی هیچ چیز عوض نشده
+if changes:  # False وقتی هیچ چیز عوض نشده
     changes.joined, changes.left, changes.promoted, changes.demoted, changes.renamed
 ```
 
@@ -284,14 +315,16 @@ if changes:                              # False وقتی هیچ چیز عوض �
 ```python
 from datetime import date, datetime
 
-msgs = await app.history(chat_id, ChatType.GROUP,
-                         since=date(2026, 4, 26), until=date(2026, 4, 28))
-msgs = await app.history(chat_id, ChatType.GROUP,
-                         since="2026-04-26", until="2026-04-28T18:00")
+msgs = await app.history(
+    chat_id, ChatType.GROUP, since=date(2026, 4, 26), until=date(2026, 4, 28)
+)
+msgs = await app.history(
+    chat_id, ChatType.GROUP, since="2026-04-26", until="2026-04-28T18:00"
+)
 rows = await app.export_history(chat_id, ChatType.GROUP, since="2026-04-26")
 
 async for m in app.iter_history(chat_id, ChatType.GROUP, limit=1000):
-    ...                                   # از جدید به قدیم، بدون بارِ حافظه
+    ...  # از جدید به قدیم، بدون بارِ حافظه
 ```
 
 `since`/`until` هر چیزی را قبول می‌کنند: `date`، `datetime`، رشتهٔ ISO، یا
@@ -312,6 +345,48 @@ async for m in app.iter_history(chat_id, ChatType.GROUP, limit=1000):
 
 ---
 
+### فوروارد: متن جای دیگری است
+
+یک فوروارد روی سیم به شکل یک پوستهٔ **خالی** می‌رسد و متنی که دنبالش هستی در
+پیام نقل‌شدهٔ کنارش است. `describe()` آن را در `quoted` بیرون می‌دهد و
+`body`/`searchable_text` از رویش می‌خوانند:
+
+```python
+info = describe(message)
+info.kind  # MessageKind.FORWARD
+info.text  # None — پوسته چیزی ندارد
+info.body  # متن آگهیِ فوروارد شده
+info.quoted.chat_id  # کدام گروه اصلِ آن را منتشر کرده
+```
+
+`searchable_text` متنِ فوروارد را می‌شمارد ولی نقل‌قولِ یک **ریپلای** را نه:
+حرفِ کسِ دیگری در پیامی که فقط به آن اشاره می‌کند، وگرنه هر ریپلای در نتیجهٔ
+جست‌وجوی پیامِ والدش ظاهر می‌شود.
+
+> در گروه‌های تبلیغاتی شلوغ نزدیک نیمی از پیام‌ها فوروارد است. تا پیش از این،
+> جست‌وجوی متنی روی `export_history` همهٔ آن‌ها را بی‌صدا از قلم می‌انداخت.
+
+### آرشیوِ قابل جست‌وجو
+
+```python
+app = BaleApp(Config.from_env())
+await app.start(background=True)
+
+sweep = await app.sync(since="2026-08-01")  # همهٔ گروه‌ها
+print(sweep.stored, "پیام ذخیره شد،", len(sweep.failed), "گروه خطا داد")
+
+result = app.search("پنل 550", limit=20)  # آفلاین
+for hit in result:
+    print(hit.chat_title, hit.snippet)
+if result.truncated:
+    print(f"{len(result)} از {result.total}")
+```
+
+`sync` هرگز به‌خاطر یک گروه از کار نمی‌افتد: هر گروه `SyncReport` خودش را
+می‌گیرد و خطا در `error` برمی‌گردد، نه به‌صورت exception. همهٔ درخواست‌ها از یک
+`RateLimiter` مشترک رد می‌شوند — یک درخواست در لحظه، با backoff وقتی سرویس
+`user_rate_limited` می‌دهد.
+
 ### مدیریت گروه
 
 ```python
@@ -322,14 +397,14 @@ ids = await app.banned(chat_id)
 await app.promote(chat_id, user_id, title="ناظر", delete_message=True)
 await app.demote(chat_id, user_id)
 
-await app.restrict(chat_id, user_id, "send_media")      # فقط همین یکی خاموش
-await app.allow(chat_id, user_id, "pin_message")        # فقط همین یکی روشن
-await app.mute(chat_id, user_id)                        # همهٔ راه‌های حرف‌زدن
+await app.restrict(chat_id, user_id, "send_media")  # فقط همین یکی خاموش
+await app.allow(chat_id, user_id, "pin_message")  # فقط همین یکی روشن
+await app.mute(chat_id, user_id)  # همهٔ راه‌های حرف‌زدن
 await app.unmute(chat_id, user_id)
 perms = await app.permissions_of(chat_id, user_id)
 
 await app.set_permissions(chat_id, user_id, send_message=False, pin_message=True)
-await app.set_default_permissions(chat_id, send_media=False)   # پیش‌فرضِ کل گروه
+await app.set_default_permissions(chat_id, send_media=False)  # پیش‌فرضِ کل گروه
 ```
 
 **چرا این لایه لازم است:** `Permissions()` هر بیست پرچمش پیش‌فرض `False` است.
@@ -348,13 +423,13 @@ await app.set_default_permissions(chat_id, send_media=False)   # پیش‌فرض
 **پین و لینک دعوت:**
 
 ```python
-pinned = await app.pins(chat_id)          # با chat_type درست (نه GROUP همیشگی)
+pinned = await app.pins(chat_id)  # با chat_type درست (نه GROUP همیشگی)
 await app.pin(chat_id, message)
 await app.unpin(chat_id, message)
 await app.unpin_all(chat_id)
 
-link = await app.invite_link(chat_id)              # link.url
-link = await app.invite_link(chat_id, revoke=True) # لینک قبلی می‌سوزد
+link = await app.invite_link(chat_id)  # link.url
+link = await app.invite_link(chat_id, revoke=True)  # لینک قبلی می‌سوزد
 info = await app.preview("https://ble.ir/join/…")  # قبل از عضو شدن
 await app.join("https://ble.ir/join/…")
 await app.leave(chat_id)
@@ -369,7 +444,29 @@ await app.leave(chat_id)
 
 ---
 
+## سرور MCP (برای ایجنت‌های هوش مصنوعی)
+
+یک سرور MCP **فقط‌خواندنی** روی همین زیرساخت، تا Claude Code و هر ایجنت
+MCP-دار بتواند آرشیو را بپرسد بدون اینکه بتواند چیزی بفرستد یا تغییر دهد:
+
+```bash
+pip install -e .[mcp]
+claude mcp add bale -- bale-mcp
+```
+
+هفت ابزار: `search_messages`، `get_messages` و `store_status` **آفلاین** از کش
+جواب می‌دهند (میلی‌ثانیه، بدون خرج rate-limit)؛ `sync_chats`، `list_chats`،
+`list_members` و `read_chat` در اولین نیاز وصل می‌شوند و یک اتصال مشترک را
+نگه می‌دارند. هیچ ابزار نوشتنی‌ای وجود ندارد — نه ارسال، نه ریپلای، نه
+moderation؛ بدترین کاری که یک ایجنت گیج می‌تواند بکند خواندنِ چیزِ اشتباه است.
+
+هر خروجی سقف دارد و بریدنش اعلام می‌شود (`total` در برابر `returned`)، چون
+ایجنتی که بی‌صدا ۵۰ تا از ۳۰۰ نتیجه را بگیرد، گزارش می‌دهد «۵۰ تا بود».
+
 ## تنظیمات
+
+`BALE_STORE_FILE` مسیر کش پیام‌ها را می‌دهد (پیش‌فرض `./data/messages.db`).
+مثل فایل نشست، این هم دادهٔ شخصی است و نباید commit شود.
 
 همه از `.env` یا محیط: `BALE_SESSION_FILE`, `BALE_PROXY`, `BALE_DOWNLOAD_DIR`,
 `HANDLE_PRIVATE`, `HANDLE_GROUPS`, `BALE_ALLOWED_USER_IDS`, `IGNORE_SELF`,

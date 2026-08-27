@@ -6,6 +6,14 @@ MIME type tell them apart, and media sent with an inline keyboard is nested one
 level deeper inside `content.bot_message`. `describe()` flattens all of that
 into a single struct so callers never inspect protobuf field aliases.
 
+A forward is the third shape that hides its payload: it arrives as an *empty*
+content stub, and the text an agent is actually looking for rides in the quoted
+message beside it. `describe()` surfaces that as `MessageInfo.quoted`, and
+`body`/`searchable_text` read through it, so a forwarded advert is as findable
+as one typed in place. In a busy channel-to-group relay that is half the
+archive: without it a text search over `export_history` silently misses every
+forwarded message.
+
 Locations, contact cards and stickers have no model in `BaleClient 1.0.9` at
 all: they ride in `MessageContent` protobuf fields the library does not
 declare, and survive only because `BaleObject` keeps unknown fields in
@@ -130,6 +138,34 @@ class StickerInfo:
 
 
 @dataclass(frozen=True)
+class QuotedInfo:
+    """The message another message hangs off.
+
+    Two different relationships arrive in the same wire slot. A *reply* quotes
+    an earlier message in the same chat, and the quote is context. A *forward*
+    quotes the original it was copied from, and the quote is the whole point:
+    the forwarding message itself carries no content at all.
+
+    `chat_id` is where the quoted message lives, which for a forward is the
+    chat it was copied out of — not the chat it landed in.
+    """
+
+    message_id: int | None
+    sender_id: int | None
+    date: int | None
+    chat_id: int | None
+    kind: MessageKind
+    text: str | None = None
+    caption: str | None = None
+    media: MediaInfo | None = None
+
+    @property
+    def body(self) -> str | None:
+        """Text of a quoted text message, or the caption of quoted media."""
+        return self.text if self.kind is MessageKind.TEXT else self.caption
+
+
+@dataclass(frozen=True)
 class MessageInfo:
     """A flat view of an incoming message."""
 
@@ -149,6 +185,9 @@ class MessageInfo:
     location: LocationInfo | None = None
     contact: ContactInfo | None = None
     sticker: StickerInfo | None = None
+    #: The message this one replies to or was forwarded from, when the wire
+    #: carried it. For a forward this holds the content; see `body`.
+    quoted: QuotedInfo | None = None
     #: The parsed body of a JSON message (wire field 7), whatever its
     #: dataType. Lets applications handle types bale-userbot does not know yet.
     json_payload: dict | None = None
@@ -163,8 +202,29 @@ class MessageInfo:
 
     @property
     def body(self) -> str | None:
-        """Text of a text message, or the caption of a media message."""
+        """Text of a text message, or the caption of a media message.
+
+        A forward has neither of its own: its body is the quoted original's,
+        which is what a reader — or a search — means by "what does it say".
+        """
+        if self.kind is MessageKind.FORWARD:
+            return self.quoted.body if self.quoted is not None else None
         return self.text if self.kind is MessageKind.TEXT else self.caption
+
+    @property
+    def searchable_text(self) -> str:
+        """Every human-readable string this message contributes, joined.
+
+        A *reply's* quote is deliberately left out. It is someone else's words
+        in a message that merely points at them, and folding it in would make
+        every reply match every search that its parent matched.
+        """
+        parts = (self.text, self.caption, self.service_text)
+        joined = [part for part in parts if part]
+        if self.kind is MessageKind.FORWARD and self.quoted is not None:
+            quote = (self.quoted.text, self.quoted.caption)
+            joined.extend(part for part in quote if part)
+        return "\n".join(joined)
 
 
 def _name_of(document: DocumentMessage) -> str | None:
@@ -242,13 +302,21 @@ def _extra(content: MessageContent) -> dict:
 
 
 def _wrapped_int(value: object) -> int | None:
-    """Bale wraps scalars as `{"1": n}`; an empty dict means "not set"."""
+    """Bale wraps scalars as `{"1": n}`; an empty dict means "not set".
+
+    The same number arrives as a bare `int` on some models and as an
+    `IntValue` on others — `QuotedMessage.message_id` is an `IntValue` while
+    `Message.message_id` beside it is plain — so all three shapes are read.
+    """
+    if isinstance(value, bool):
+        return None
     if isinstance(value, int):
         return value
     if isinstance(value, dict):
         inner = value.get("1")
         return inner if isinstance(inner, int) else None
-    return None
+    inner = getattr(value, "value", None)
+    return inner if isinstance(inner, int) else None
 
 
 def _sticker_image(block: object) -> StickerImage | None:
@@ -340,9 +408,25 @@ def unwrap(content: MessageContent) -> tuple[MessageContent, bool]:
     return content, False
 
 
-def describe(message: Message) -> MessageInfo:
-    """Flatten a `Message` into a `MessageInfo`. Never raises on odd payloads."""
-    content, has_keyboard = unwrap(message.content)
+@dataclass(frozen=True)
+class _Parsed:
+    """What one `MessageContent` turned out to hold."""
+
+    kind: MessageKind
+    has_keyboard: bool = False
+    text: str | None = None
+    caption: str | None = None
+    media: MediaInfo | None = None
+    service_text: str | None = None
+    location: LocationInfo | None = None
+    contact: ContactInfo | None = None
+    sticker: StickerInfo | None = None
+    json_payload: dict | None = None
+
+
+def parse_content(raw: MessageContent) -> _Parsed:
+    """Classify one content block. Shared by a message and its quote."""
+    content, has_keyboard = unwrap(raw)
 
     kind = MessageKind.UNKNOWN
     text = caption = service_text = None
@@ -390,29 +474,81 @@ def describe(message: Message) -> MessageInfo:
         # An empty stub with a quoted message is how a forward arrives.
         kind = MessageKind.FORWARD
 
+    return _Parsed(
+        kind=kind,
+        has_keyboard=has_keyboard,
+        text=text,
+        caption=caption,
+        media=media,
+        service_text=service_text,
+        location=location,
+        contact=contact,
+        sticker=sticker,
+        json_payload=json_payload,
+    )
+
+
+def _quote_of(message: Message) -> QuotedInfo | None:
+    """The quoted message beside this one, whichever slot carried it.
+
+    `replied_to` is a whole `Message` and `quoted_replied_to` a trimmed
+    `QuotedMessage`; both hold the same content, so either will do. The quoted
+    one is preferred because it names the *origin* chat — for a forward, the
+    chat the message was copied out of, which `replied_to` does not record.
+    """
+    quoted = message.quoted_replied_to
+    if quoted is not None:
+        peer = getattr(quoted, "peer", None)
+        parsed = parse_content(quoted.content)
+        chat_id = getattr(peer, "id", None)
+    else:
+        replied = message.replied_to
+        if replied is None:
+            return None
+        parsed = parse_content(replied.content)
+        chat_id = getattr(getattr(replied, "chat", None), "id", None)
+        quoted = replied
+
+    return QuotedInfo(
+        message_id=_wrapped_int(getattr(quoted, "message_id", None)),
+        sender_id=getattr(quoted, "sender_id", None),
+        date=getattr(quoted, "date", None),
+        chat_id=chat_id if isinstance(chat_id, int) else None,
+        kind=parsed.kind,
+        text=parsed.text,
+        caption=parsed.caption,
+        media=parsed.media,
+    )
+
+
+def describe(message: Message) -> MessageInfo:
+    """Flatten a `Message` into a `MessageInfo`. Never raises on odd payloads."""
+    parsed = parse_content(message.content)
+    quoted = _quote_of(message)
+
     # BaleObject sets use_enum_values, so chat.type arrives as a plain int.
     try:
         chat_type = ChatType(message.chat.type)
     except ValueError:
         chat_type = ChatType.UNKNOWN
 
-    replied = message.replied_to or message.quoted_replied_to
     return MessageInfo(
-        kind=kind,
+        kind=parsed.kind,
         message_id=message.message_id,
         chat_id=message.chat.id,
         chat_type=chat_type,
         sender_id=message.sender_id,
         date=message.date,
-        text=text,
-        caption=caption,
-        media=media,
-        has_keyboard=has_keyboard,
-        is_forward=content.empty or kind is MessageKind.FORWARD,
-        reply_to_id=getattr(replied, "message_id", None),
-        service_text=service_text,
-        location=location,
-        contact=contact,
-        sticker=sticker,
-        json_payload=json_payload,
+        text=parsed.text,
+        caption=parsed.caption,
+        media=parsed.media,
+        has_keyboard=parsed.has_keyboard,
+        is_forward=parsed.kind is MessageKind.FORWARD,
+        reply_to_id=quoted.message_id if quoted is not None else None,
+        service_text=parsed.service_text,
+        location=parsed.location,
+        contact=parsed.contact,
+        sticker=parsed.sticker,
+        quoted=quoted,
+        json_payload=parsed.json_payload,
     )

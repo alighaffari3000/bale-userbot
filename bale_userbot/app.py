@@ -42,6 +42,7 @@ from .groups import (
     watch_membership,
 )
 from .history import export_history, iter_history, load_history
+from .limiter import RateLimiter
 from .logging_setup import setup_logging
 from .media import FileLike, download, resend, send_media
 from .moderation import (
@@ -76,6 +77,8 @@ from .routing import (
     kinds_filter,
     wrap_handler,
 )
+from .store import MessageStore, SearchResult
+from .sync import SweepReport, sync_chat, sync_chats
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +134,8 @@ class BaleApp:
         self._serializer = ChatSerializer() if self.config.serialize_per_chat else None
         self._lifespan_hook = lifespan
         self._client: KitClient | None = None
+        self._store: MessageStore | None = None
+        self._limiter = RateLimiter()
 
     # -- client ------------------------------------------------------------
     @property
@@ -511,6 +516,32 @@ class BaleApp:
         """Leave a group or channel."""
         return await leave(self.client, chat_id)
 
+    # -- searchable cache --------------------------------------------------
+    @property
+    def store(self) -> MessageStore:
+        """The local message cache. Opened on first use."""
+        if self._store is None:
+            self._store = MessageStore(self.config.store_file)
+        return self._store
+
+    async def sync(
+        self, chat_ids: Sequence[int] | None = None, **kwargs: Any
+    ) -> SweepReport:
+        """Bring the cache up to date. No ids means every group you are in."""
+        return await sync_chats(
+            self, self.store, chat_ids, limiter=self._limiter, **kwargs
+        )
+
+    async def sync_chat(self, chat_id: int, **kwargs: Any) -> Any:
+        """Bring one chat's cache up to date."""
+        return await sync_chat(
+            self, self.store, chat_id, limiter=self._limiter, **kwargs
+        )
+
+    def search(self, query: str, **kwargs: Any) -> SearchResult:
+        """Search the cache. Offline — `sync()` is what fills it."""
+        return self.store.search(query, **kwargs)
+
     # -- lifecycle ---------------------------------------------------------
     async def start(self, *, background: bool = False) -> None:
         """Connect and begin handling updates.
@@ -524,12 +555,19 @@ class BaleApp:
                 f"no Bale session at {self.config.session_file}. "
                 "Run `python -m bale_userbot login` once to authenticate."
             )
-        setup_logging(self.config.log_level)
+        # Only when nobody configured logging yet. The CLI routes logs to
+        # stderr before starting, and an MCP server must keep stdout for the
+        # protocol; forcing stdout here used to clobber both.
+        if not logging.getLogger().handlers:
+            setup_logging(self.config.log_level)
         await self.client.start(run_in_background=background)
 
     async def stop(self) -> None:
         if self._client is not None:
             await self._client.stop()
+        if self._store is not None:
+            self._store.close()
+            self._store = None
 
     def run(self) -> None:
         """Start and block until the process is stopped."""

@@ -11,10 +11,13 @@ from baleclient.types import (
     DocumentMessage,
     DocumentsExt,
     GiftPacket,
+    IntValue,
     Message,
     MessageCaption,
     MessageContent,
+    Peer,
     PhotoExt,
+    QuotedMessage,
     StringValue,
     TemplateMessage,
     TextMessage,
@@ -212,3 +215,66 @@ def sticker_content() -> MessageContent:
 
 def with_keyboard(inner: MessageContent) -> MessageContent:
     return MessageContent(bot_message=TemplateMessage(message=inner))
+
+
+#: Where a forwarded advert was originally posted.
+ORIGIN_ID = 333
+
+
+def quoted(
+    content: MessageContent,
+    *,
+    message_id: int = 77,
+    sender_id: int = PEER_ID,
+    origin_id: int = ORIGIN_ID,
+    chat_id: int = PEER_ID,
+    chat_type: ChatType = ChatType.GROUP,
+) -> QuotedMessage:
+    """The quote block that rides beside a reply or a forward.
+
+    `origin_id` is the peer the quoted message belongs to; `chat_id` is the
+    chat the quoting message landed in. For a forward they differ.
+    """
+    return QuotedMessage(
+        message_id=IntValue(value=message_id),
+        sender_id=sender_id,
+        date=1_699_000_000_000,
+        content=content,
+        peer=Peer(type=chat_type, id=origin_id),
+        chat=chat(chat_id, chat_type),
+    )
+
+
+def forwarded(
+    inner: MessageContent,
+    *,
+    origin_id: int = ORIGIN_ID,
+    chat_id: int = PEER_ID,
+    chat_type: ChatType = ChatType.GROUP,
+    message_id: int = 1,
+) -> Message:
+    """A forward exactly as it arrives: an empty stub plus the original."""
+    return Message(
+        chat=chat(chat_id, chat_type),
+        sender_id=PEER_ID,
+        date=1_700_000_000_000,
+        message_id=message_id,
+        content=forward_content(),
+        quoted_replied_to=quoted(
+            inner, origin_id=origin_id, chat_id=chat_id, chat_type=chat_type
+        ),
+    )
+
+
+def replying(own: MessageContent, to: MessageContent) -> Message:
+    """A normal reply: content of its own, with the parent quoted beside it."""
+    return Message(
+        chat=chat(PEER_ID, ChatType.GROUP),
+        sender_id=PEER_ID,
+        date=1_700_000_000_000,
+        message_id=2,
+        content=own,
+        quoted_replied_to=quoted(
+            to, origin_id=PEER_ID, chat_id=PEER_ID, chat_type=ChatType.GROUP
+        ),
+    )

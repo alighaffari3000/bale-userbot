@@ -8,3 +8,5 @@ data/
 __pycache__/
 .ruff_cache/
 .pytest_cache/
+# Working notes for Claude Code sessions; local to this machine.
+notes/

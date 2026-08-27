@@ -1,9 +1,15 @@
 """`python -m bale_userbot <command>` — login, whoami, groups, members, history.
 
 The read-only commands exist so the common questions — who is in this group,
-what did it say last week — can be answered without writing a script. They all
-print JSON with `--json`, which is the point: the CLI is a way to get the same
-records `groups.py` and `history.py` return into a file.
+what did it say last week, who mentioned this — can be answered without
+writing a script. They all print JSON with `--json`, which is the point: the
+CLI is a way to get the same records `groups.py` and `history.py` return into
+a file.
+
+`sync` and `search` are the pair that make the last of those questions cheap.
+`sync` pulls history into the local store once; `search` then reads it with no
+network at all, so asking the archive twelve questions costs twelve SQLite
+queries rather than twelve sweeps of a rate-limited account.
 """
 
 from __future__ import annotations
@@ -12,6 +18,7 @@ import argparse
 import asyncio
 import json
 import sys
+from datetime import datetime
 from typing import Any
 
 from baleclient.enums import ChatType
@@ -21,6 +28,7 @@ from .config import Config
 from .groups import member_records
 from .history import message_record
 from .logging_setup import setup_logging
+from .store import MessageStore
 
 #: Chat types a user can name on the command line.
 CHAT_TYPES = {
@@ -181,7 +189,7 @@ async def cmd_history(config: Config, args: argparse.Namespace) -> int:
         args.json,
         [
             f"[{r['kind']:<8}] {r['message_id']:>14} from={r['sender_id']:<14} "
-            f"{(r['text'] or r['caption'] or '')[:60]!r}"
+            f"{(r['body'] or '')[:60]!r}"
             for r in rows
         ]
         or ["no messages in that range"],
@@ -214,6 +222,96 @@ async def cmd_link(config: Config, args: argparse.Namespace) -> int:
     finally:
         await app.stop()
     return _emit(link.as_dict(), args.json, [link.url])
+
+
+def _when(timestamp: int | None) -> str:
+    if not timestamp:
+        return "-"
+    return datetime.fromtimestamp(timestamp / 1000).strftime("%Y-%m-%d %H:%M")
+
+
+async def cmd_sync(config: Config, args: argparse.Namespace) -> int:
+    app = await _connected(config)
+    try:
+        sweep = await app.sync(
+            args.chat_ids or None,
+            since=args.since,
+            limit=args.limit,
+            full=args.full,
+        )
+    finally:
+        await app.stop()
+
+    lines = [
+        f"{r.chat_id:>14}  {r.stored:>6} stored  {r.fetched:>6} fetched  "
+        f"{_mode(r):<4}  {r.title or '-'}" + (f"  [{r.error}]" if r.error else "")
+        for r in sweep.chats
+    ]
+    lines.append(
+        f"{sweep.stored} messages stored, {len(sweep.failed)} chats failed, "
+        f"{sweep.calls} requests ({sweep.rate_limited} rate limited)"
+    )
+    _emit(sweep.as_dict(), args.json, lines)
+    # A sweep that could not read a single chat is a failure, not a report.
+    return 1 if sweep.chats and not any(r.ok for r in sweep.chats) else 0
+
+
+def _mode(report: Any) -> str:
+    return "incr" if report.incremental else "full"
+
+
+def cmd_search(config: Config, args: argparse.Namespace) -> int:
+    """Offline: reads the store `sync` filled, never the network."""
+    with MessageStore(config.store_file) as store:
+        result = store.search(
+            args.query,
+            chat_ids=args.chat or None,
+            sender_id=args.sender,
+            since=args.since,
+            until=args.until,
+            regex=args.regex,
+            limit=args.limit,
+        )
+        lines = [
+            f"{_when(hit.date)}  {_label(hit):<28.28}  from={hit.sender_id:<12}"
+            f"{' fwd' if hit.is_forward else '    '}  {hit.snippet}"
+            for hit in result
+        ]
+        if result.truncated:
+            lines.append(f"— showing {len(result)} of {result.total} matches —")
+        elif not lines:
+            lines.append("no matches in the store (is it synced?)")
+        return _emit(
+            {
+                "total": result.total,
+                "truncated": result.truncated,
+                "hits": [hit.as_dict() for hit in result],
+            },
+            args.json,
+            lines,
+        )
+
+
+def _label(hit: Any) -> str:
+    return str(hit.chat_title or hit.chat_id)
+
+
+def cmd_store(config: Config, args: argparse.Namespace) -> int:
+    """What the local store holds, without touching the account."""
+    with MessageStore(config.store_file) as store:
+        states = store.states()
+        titles = store.chat_titles()
+        rows = [
+            f"{s.chat_id:>14}  {s.messages:>6} msgs  "
+            f"{_when(s.oldest_date)} .. {_when(s.newest_date)}  "
+            f"{titles.get(s.chat_id) or '-'}"
+            for s in states
+        ]
+        return _emit(
+            [state.as_dict() for state in states],
+            args.json,
+            [f"store: {config.store_file}"] + (rows or ["nothing synced yet"]),
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -267,6 +365,34 @@ def build_parser() -> argparse.ArgumentParser:
     )
     link.add_argument("--json", action="store_true", help="print JSON records")
 
+    sync = sub.add_parser("sync", help="pull history into the local store")
+    sync.add_argument(
+        "chat_ids", type=int, nargs="*", help="chats to sync; default is all groups"
+    )
+    sync.add_argument("--since", help="how far back a first sync reaches")
+    sync.add_argument("--limit", type=int, default=None, help="messages per chat")
+    sync.add_argument(
+        "--full", action="store_true", help="re-read the window, not just what is new"
+    )
+    sync.add_argument("--json", action="store_true", help="print JSON records")
+
+    search = sub.add_parser("search", help="search the synced store (offline)")
+    search.add_argument("query", help="words to match, or a pattern with --regex")
+    search.add_argument(
+        "--chat", type=int, action="append", help="limit to a chat; repeatable"
+    )
+    search.add_argument("--sender", type=int, help="limit to one sender id")
+    search.add_argument("--since", help="date or datetime")
+    search.add_argument("--until", help="a plain date covers the whole day")
+    search.add_argument(
+        "--regex", action="store_true", help="treat the query as a regular expression"
+    )
+    search.add_argument("--limit", type=int, default=50)
+    search.add_argument("--json", action="store_true", help="print JSON records")
+
+    store = sub.add_parser("store", help="what the local store holds")
+    store.add_argument("--json", action="store_true", help="print JSON records")
+
     return parser
 
 
@@ -277,6 +403,14 @@ _COMMANDS = {
     "history": cmd_history,
     "pins": cmd_pins,
     "link": cmd_link,
+    "sync": cmd_sync,
+}
+
+#: Commands that read the store instead of the account: no connection, and
+#: no session needed.
+_OFFLINE_COMMANDS = {
+    "search": cmd_search,
+    "store": cmd_store,
 }
 
 
@@ -289,8 +423,11 @@ def main(argv: list[str] | None = None) -> int:
 
         config.session_file = Path(args.session).expanduser()
     # Data commands print records on stdout; their log lines must not.
-    setup_logging(config.log_level, sys.stderr if args.command in _COMMANDS else None)
+    prints_data = args.command in _COMMANDS or args.command in _OFFLINE_COMMANDS
+    setup_logging(config.log_level, sys.stderr if prints_data else None)
 
+    if args.command in _OFFLINE_COMMANDS:
+        return _OFFLINE_COMMANDS[args.command](config, args)
     if args.command == "login":
         return asyncio.run(cmd_login(config, args.replace))
     if args.command == "whoami":
