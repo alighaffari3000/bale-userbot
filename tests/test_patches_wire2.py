@@ -157,3 +157,103 @@ def test_an_entry_that_cannot_be_saved_is_dropped_not_fatal():
 @pytest.mark.parametrize("shape", [{}, {"3": []}])
 def test_empty_dialog_pages_parse(shape):
     assert DialogResponse.model_validate(shape).dialogs == []
+
+
+# -- MessageCaption: unmodeled submessage where the text should be ----------
+#
+# Live capture from group 818374634: a forwarded document whose caption field
+# "1" carried {"6": <int64>} instead of a string. One such message failed its
+# QuotedMessage, then its MessageData, then the whole HistoryResponse page --
+# the chat could never sync past it.
+
+CAPTION_DOC = {
+    "1": -7033344833870356733,
+    "2": 1252665523,
+    "5": "image/jpeg",
+}
+
+
+def _history_entry(message_id: int, content: dict, quoted: dict | None = None):
+    entry = {"1": 99, "2": message_id, "3": 1_700_000_000_000, "4": content}
+    if quoted is not None:
+        entry["8"] = {
+            "1": {"1": 7},
+            "3": 55,
+            "4": 1_700_000_000_000,
+            "5": quoted,
+            "6": {"1": 2, "2": 818374634},
+        }
+    return entry
+
+
+def test_caption_with_an_unmodeled_submessage_parses():
+    from baleclient.types.message_content import MessageCaption
+
+    caption = MessageCaption.model_validate({"1": {"6": 8391179504838994736}})
+    assert caption.content is None  # no text to recover; the document survives
+
+
+def test_caption_with_collapsed_text_submessage_keeps_the_text():
+    from baleclient.types.message_content import MessageCaption
+
+    caption = MessageCaption.model_validate({"1": {"1": "still a caption"}})
+    assert caption.content == "still a caption"
+
+
+def test_plain_string_captions_are_untouched():
+    from baleclient.types.message_content import MessageCaption
+
+    caption = MessageCaption.model_validate({"1": "a caption", "2": 0})
+    assert caption.content == "a caption"
+
+
+def test_quoted_document_with_poisoned_caption_survives_in_history():
+    from baleclient.types.responses import HistoryResponse
+
+    poisoned = {"4": {**CAPTION_DOC, "8": {"1": {"6": 8391179504838994736}}}}
+    response = HistoryResponse.model_validate(
+        {"1": [_history_entry(1, {"15": {"1": "ok"}}, quoted=poisoned)]}
+    )
+    assert len(response.data) == 1
+    assert response.data[0].replied_to is not None
+
+
+# -- HistoryResponse: one exotic message must not kill the page -------------
+
+
+def test_an_unparseable_history_entry_is_dropped_not_fatal():
+    from baleclient.types.responses import HistoryResponse
+
+    # "3" (date) as a dict fails MessageData in a way no field repair covers.
+    broken = {"1": 99, "2": 2, "3": {"9": 9}, "4": {"15": {"1": "x"}}}
+    response = HistoryResponse.model_validate(
+        {
+            "1": [
+                _history_entry(1, {"15": {"1": "before"}}),
+                broken,
+                _history_entry(3, {"15": {"1": "after"}}),
+            ]
+        }
+    )
+    assert [m.message_id for m in response.data] == [1, 3]
+
+
+def test_a_healthy_history_page_is_untouched():
+    from baleclient.types.responses import HistoryResponse
+
+    response = HistoryResponse.model_validate(
+        {
+            "1": [
+                _history_entry(1, {"15": {"1": "a"}}),
+                _history_entry(2, {"15": {"1": "b"}}),
+            ]
+        }
+    )
+    assert [m.message_id for m in response.data] == [1, 2]
+
+
+@pytest.mark.parametrize("shape", [{}, {"1": []}])
+def test_empty_history_pages_parse(shape):
+    from baleclient.types.responses import HistoryResponse
+
+    assert HistoryResponse.model_validate(shape).data == []

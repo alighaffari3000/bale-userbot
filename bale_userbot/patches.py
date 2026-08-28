@@ -219,6 +219,73 @@ def _make_fixed_add_message(original):
     return _fixed_add_message
 
 
+def _fixed_caption_fields(cls: type, data: Any) -> Any:
+    """`MessageCaption.fix_mentions`, plus: survive a non-string caption text.
+
+    `MessageCaption.content` (field "1") is `Optional[str]`, but a forwarded
+    document in a live trade group arrived with `{"1": {"6": <int64>}}` — an
+    unmodeled submessage where the text should be. One such caption failed the
+    quoted message, the quoted message failed its `MessageData`, and that
+    failed the whole `HistoryResponse` page: the chat could never sync past
+    it. The text is unrecoverable (there is none), so it degrades to a
+    caption-less document instead of a dead chat.
+    """
+    if not isinstance(data, dict):
+        return data
+
+    if "2" in data and not isinstance(data["2"], (list, dict)):
+        data["2"] = {}
+
+    text = data.get("1")
+    if isinstance(text, bytes):
+        data["1"] = text.decode("utf-8", "replace")
+    elif isinstance(text, dict):
+        # A collapsed single-field submessage may still hold the real text.
+        inner = text.get("1")
+        data["1"] = inner if isinstance(inner, str) else None
+    elif text is not None and not isinstance(text, str):
+        data["1"] = None
+
+    return data
+
+
+def _make_lenient_history(cls: type):
+    """A before-validator for `HistoryResponse` that saves what it can.
+
+    The caption repair above fixes the shape we have seen; this fixes the
+    shape we have not. Every entry is trial-validated, and one that fails is
+    dropped loudly instead of taking the page — and with it every older
+    message of that chat — down. Mirrors `_make_lenient_dialogs`: on a wire
+    format that is undocumented and shifting, "one exotic message kills the
+    sweep" is a class of bug, not an instance.
+    """
+    from baleclient.types import MessageData
+
+    def _lenient(cls_: type, data: Any) -> Any:
+        if not isinstance(data, dict) or "1" not in data:
+            return data
+        entries = data["1"] if isinstance(data["1"], list) else [data["1"]]
+
+        kept = []
+        for entry in entries:
+            try:
+                MessageData.model_validate(entry)
+            except Exception as exc:
+                marker = entry.get("2") if isinstance(entry, dict) else None
+                logger.warning(
+                    "dropping unparseable history entry (message_id %r): %s",
+                    marker,
+                    type(exc).__name__,
+                )
+                continue
+            kept.append(entry)
+
+        data["1"] = kept
+        return data
+
+    return _lenient
+
+
 def _make_lenient_dialogs(cls: type):
     """A before-validator for `DialogResponse` that saves what it can.
 
@@ -302,6 +369,32 @@ def apply_wire_fixes() -> None:
         _make_fixed_add_message(original_add), MessageResponse
     )
     MessageResponse.model_rebuild(force=True)
+
+    # -- MessageCaption: unmodeled submessage where the text should be -----
+    from baleclient.types.message_content import MessageCaption
+
+    caption_validators = MessageCaption.__pydantic_decorators__.model_validators
+    caption_validators["fix_mentions"].func = MethodType(
+        _fixed_caption_fields, MessageCaption
+    )
+    MessageCaption.model_rebuild(force=True)
+    # `MessageContent` was already rebuilt above — *before* this swap — and
+    # the closing rebuild loop deliberately skips it, so without this line its
+    # compiled schema would keep the old caption validator forever (the swap
+    # would pass a unit test on `MessageCaption` and still fail on the wire).
+    MessageContent.model_rebuild(force=True)
+
+    # -- HistoryResponse: one exotic message kills the page ----------------
+    from baleclient.types.responses import HistoryResponse
+
+    history_validators = HistoryResponse.__pydantic_decorators__.model_validators
+    lenient_history = deepcopy(history_validators["validate_list"])
+    lenient_history.cls_var_name = "_bale_userbot_lenient_history"
+    lenient_history.func = MethodType(
+        _make_lenient_history(HistoryResponse), HistoryResponse
+    )
+    history_validators["_bale_userbot_lenient_history"] = lenient_history
+    HistoryResponse.model_rebuild(force=True)
 
     # -- DialogResponse: one exotic dialog kills the page ------------------
     from baleclient.types.responses import DialogResponse
