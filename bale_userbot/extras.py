@@ -7,9 +7,9 @@ fields, and the protobuf encoder is schema-less, so a `MessageContent` built
 with extra numeric keys serializes exactly like a native one. Incoming
 payloads are parsed by `describe()`; this module is the sending side.
 
-Reactions and the typing indicator are here for a different reason: the
-library's own methods build their peer from the raw chat type and cannot
-address a bot chat, super-group or channel at all.
+Reactions, the typing indicator and read receipts are here for a different
+reason: the library's own methods build their peer from the raw chat type and
+cannot address a bot chat, super-group or channel at all.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from typing import Any
 from baleclient import Client
 from baleclient.enums import ChatType, TypingMode
 from baleclient.methods import (
+    MessageRead,
     MessageRemoveReaction,
     MessageSetReaction,
     SendMessage,
@@ -282,6 +283,28 @@ async def react(
 async def unreact(client: Client, message: Message, emoji: str) -> list[Reaction]:
     """Take back a reaction previously added to a message."""
     return await react(client, message, emoji, remove=True)
+
+
+async def mark_seen(
+    client: Client,
+    chat_id: int,
+    chat_type: ChatType,
+    *,
+    date: int | None = None,
+) -> Any:
+    """Mark a chat as read — the other side's ticks turn.
+
+    Same peer-resolution fix as `react()`: upstream `seen_chat` builds
+    `Peer(id=chat_id, type=_resolve_peer_type(chat_type))`, and `PeerType` only
+    defines UNKNOWN/PRIVATE/GROUP, so it cannot address a bot chat, super-group
+    or channel.
+
+    `date` marks everything up to that message's timestamp; without it the
+    whole chat is marked read, which is what answering a message means.
+    """
+    peer = client._resolve_peer(client._build_chat(chat_id, chat_type))
+    call = MessageRead(peer=peer, date=date) if date is not None else MessageRead(peer=peer)
+    return await client(call)
 
 
 async def set_typing(

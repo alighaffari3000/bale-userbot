@@ -40,7 +40,7 @@ app.run()  # اتصال، هندشیک، reconnect
 | همان متد برای رویدادهای غیرِ `message` همیشه «نادیده بگیر» برمی‌گرداند | ویرایش/حذف پیام و بقیهٔ رویدادها هرگز dispatch نمی‌شوند | همان override |
 | `AudioExt(album=...)` تگ‌ها را می‌اندازد (validatorِ before کلیدهای aliasی را با `None` بازنویسی می‌کند) — و `send_audio` دقیقاً همین کار را می‌کند | آلبوم/ژانر/نام قطعه بی‌صدا گم می‌شوند | `audio_ext()` از طریق aliasها می‌سازد؛ `send_media` وقتی تگ داری از مسیر امن می‌رود |
 | `ServiceMessage` هر دو فیلد متن و ext را الزامی می‌داند و `Thumbnail` هم w/h را — ولی خودِ `DocumentMessage` تامبِ ناقص را نگه می‌دارد | یک فیلد غایب کل `MessageContent` را می‌ترکاند؛ روی وب‌سوکت این استثنا بلعیده می‌شود و **کل آپدیت بی‌صدا گم می‌شود** | همان پچ، بلوک ناقص را null می‌کند تا بقیهٔ پیام برسد |
-| `set_reaction`/`remove_reaction`/`typing`/`stop_typing` با `Peer(type=chat_type)` خام ساخته می‌شوند، ولی `PeerType` فقط 0/1/2 دارد | ری‌اکشن یا «در حال تایپ» در ربات، سوپرگروه و کانال، *قبل از هر درخواست شبکه*، ValidationError می‌دهد | `react()` / `unreact()` / `set_typing()` peer را مثل بقیهٔ کتابخانه resolve می‌کنند |
+| `set_reaction`/`remove_reaction`/`typing`/`stop_typing`/`seen_chat` با `Peer(type=chat_type)` خام ساخته می‌شوند، ولی `PeerType` فقط 0/1/2 دارد | ری‌اکشن، «در حال تایپ» یا تیک خوانده‌شدن در ربات، سوپرگروه و کانال، *قبل از هر درخواست شبکه*، ValidationError می‌دهد | `react()` / `unreact()` / `set_typing()` / `mark_seen()` peer را مثل بقیهٔ کتابخانه resolve می‌کنند |
 | دیسپچر با `inspect.iscoroutinefunction` تصمیم می‌گیرد | هندلری که یک شیء صدازدنی است (نه تابع) داخل thread executor بدون await رها می‌شود | `wrap_handler` همیشه یک coroutine function ثبت می‌کند |
 | آپدیت‌ها با `asyncio.create_task` پرتاب می‌شوند | استثنای هندلر همراه task بی‌صدا گم می‌شود | `wrap_handler` لاگ می‌کند و اختیاری `on_error` صدا می‌زند |
 | در پاسخ `GetFullGroup` گروه‌ها، فیلد `3` هر عضو **نام نمایشی** (رشته) است ولی `Member.date` آن را `int` اعلام کرده | یک عضو اسم‌دار کل پاسخ را رد می‌کند — عنوان گروه هم با آن گم می‌شود؛ کانال‌ها (بدون لیست عضو) سالم‌اند | همان پچ مقدار را از فیلد `3` بیرون می‌برد ولی نامش را در `member.display_name` نگه می‌دارد؛ `MemberInfo.name` رایگان پر می‌شود |
@@ -180,6 +180,29 @@ await app.start(background=True)  # فقط وصل شو و برگرد — برا�
 گیت‌های سطح config (خصوصی/گروه، allowlist، پیام‌های خودت) قبل از فیلترهای تو
 اعمال می‌شوند.
 
+فقط `run()` لاگینگ را تنظیم می‌کند (چون `setup_logging` با `force=True` هندلرهای
+ریشه را پاک می‌کند). `start()` هیچ دست‌کاری سراسری نمی‌کند، پس یک میزبان می‌تواند
+با خیال راحت embed کند و لاگینگ خودش را نگه دارد.
+
+**تشخیص مداخلهٔ دستی:**
+
+```python
+@app.on_message_sent()          # پیامی که خودِ صاحب اکانت فرستاده
+async def on_takeover(event, client):
+    # event یک InfoMessage است: peer و message_id و date دارد، ولی متن ندارد
+    pause_agent_for(event.peer.id)
+```
+
+بله هر پیام خروجی را به‌صورت رویداد جداگانهٔ `message_sent` گزارش می‌کند، چه از
+این پروسه رفته باشد چه از موبایل. `BaleApp` شناسهٔ هرچه خودش فرستاده نگه می‌دارد و
+echo آن‌ها را حذف می‌کند، پس آنچه به این هندلر می‌رسد واقعاً انسان است — همان
+سیگنالی که برای ساکت کردن موقت ایجنت لازم است. با `include_own=True` هر دو را
+می‌بینی.
+
+به همین دلیل برای ارسال متن `app.send_text()` / `app.reply_text()` را ترجیح بده:
+‏`message.answer()` همان کار را می‌کند ولی شناسه را ثبت نمی‌کند، پس پاسخ خودت
+به‌شکل «مداخلهٔ دستی» برمی‌گردد.
+
 **`describe(message) -> MessageInfo`** — نمای صاف پیام:
 `kind`, `text`, `caption`, `body`, `searchable_text`, `media`, `has_keyboard`,
 `is_forward`, `quoted` (`QuotedInfo`), `reply_to_id`, `sender_id`, `chat_id`,
@@ -216,17 +239,19 @@ await app.reply_content(message, any_message_content)
 `destination=None` صریح، خودِ بایت‌ها را برمی‌گرداند. اسم فایل پیش‌فرض با نوع
 پیام ساخته می‌شود (`sticker-<id>.png`, `voice-<id>.ogg`).
 
-**ری‌اکشن و «در حال تایپ»:**
+**ری‌اکشن، «در حال تایپ» و تیک خوانده‌شدن:**
 
 ```python
 await app.react(message, "👍")
 await app.unreact(message, "👍")
 await app.typing(chat_id, mode=TypingMode.SENDINGPHOTO)
 await app.typing(chat_id, stop=True)
+await app.seen_message(message)          # تیک خوانده‌شدن
+await app.seen(chat_id, chat_type)
 ```
 
 برخلاف متدهای خود `BaleClient`، این‌ها در ربات/سوپرگروه/کانال هم کار می‌کنند
-(جدول بالا).
+(جدول بالا) — ‏`seen_chat` هم دقیقاً همان اشکال peer را داشت.
 
 استیکر یعنی ارجاع به یک مجموعهٔ سمت سرور؛ ساختن استیکر جدید از این‌جا ممکن
 نیست — همانی را می‌فرستی که قبلاً دریافت (یا در history دیده‌ای).

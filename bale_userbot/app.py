@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import stat
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -13,12 +14,13 @@ from typing import Any
 from baleclient import Dispatcher, Router
 from baleclient.enums import ChatType
 from baleclient.filters import Filter
-from baleclient.types import Message, Permissions
+from baleclient.types import InfoMessage, Message, Permissions
 
 from .client import KitClient
 from .config import Config
 from .content import MessageInfo, MessageKind, describe
 from .extras import (
+    mark_seen,
     react,
     send_contact,
     send_content,
@@ -136,6 +138,9 @@ class BaleApp:
         self._client: KitClient | None = None
         self._store: MessageStore | None = None
         self._limiter = RateLimiter()
+        #: Ids of messages this app sent, so `on_message_sent` can tell an
+        #: agent's own reply from the owner typing on their phone.
+        self._sent_ids: OrderedDict[int, None] = OrderedDict()
 
     # -- client ------------------------------------------------------------
     @property
@@ -208,8 +213,69 @@ class BaleApp:
 
         return decorator
 
+    def on_message_sent(
+        self,
+        *,
+        include_own: bool = False,
+        router: Router | None = None,
+    ) -> Callable[[Handler], Handler]:
+        """Register a handler for messages this account sent.
+
+        Bale reports every outgoing message as a separate `message_sent`
+        update, whether it came from this process or from the owner's phone.
+        The two are indistinguishable on the wire, so this app remembers the
+        ids it sent itself and drops their echoes — what reaches the handler is
+        then genuinely someone at a keyboard.
+
+        That distinction is the point: an agent that keeps answering while its
+        owner is already replying in the same chat is the most obvious way for
+        it to give itself away. Pass `include_own=True` to see both.
+
+        The payload is `InfoMessage`, not `Message`: it carries `peer`,
+        `message_id` and `date` but **no text**. Read the body from history if
+        the handler needs it.
+
+        The `on_message` filter chain is deliberately not reused here — every
+        filter in it starts by rejecting anything that is not a `Message`, so
+        it would drop all of these.
+        """
+        target = router or self.dispatcher
+
+        def decorator(handler: Handler) -> Handler:
+            async def wrapped(event: InfoMessage, client: Any) -> Any:
+                if not include_own and self._was_sent_here(event.message_id):
+                    return None
+                try:
+                    return await handler(event, client)
+                except Exception:
+                    # Dispatch runs handlers as detached tasks, so an exception
+                    # here would otherwise vanish without a trace.
+                    logger.exception("message_sent handler failed")
+                    return None
+
+            target.register("message_sent")(wrapped)
+            return handler
+
+        return decorator
+
     def include_router(self, router: Router) -> None:
         self.dispatcher.include_router(router)
+
+    # -- own-message bookkeeping -------------------------------------------
+    #: Enough to recognise an echo, which arrives within seconds of the send.
+    _SENT_ID_MEMORY = 512
+
+    def _remember_sent(self, message: Message | InfoMessage | Any) -> Any:
+        """Record an id we sent, so its echo is not mistaken for the owner."""
+        message_id = getattr(message, "message_id", None)
+        if message_id is not None:
+            self._sent_ids[message_id] = None
+            while len(self._sent_ids) > self._SENT_ID_MEMORY:
+                self._sent_ids.popitem(last=False)
+        return message
+
+    def _was_sent_here(self, message_id: int | None) -> bool:
+        return message_id is not None and message_id in self._sent_ids
 
     # -- convenience over the client --------------------------------------
     @staticmethod
@@ -224,14 +290,18 @@ class BaleApp:
         **kwargs: Any,
     ) -> Message:
         """Send any file; the right send_* method is picked from its type."""
-        return await send_media(self.client, file, chat_id, chat_type, **kwargs)
+        return self._remember_sent(
+            await send_media(self.client, file, chat_id, chat_type, **kwargs)
+        )
 
     async def reply_with(
         self, message: Message, file: FileLike, **kwargs: Any
     ) -> Message:
         """Send any file back into the chat a message came from."""
-        return await send_media(
-            self.client, file, message.chat.id, message.chat.type, **kwargs
+        return self._remember_sent(
+            await send_media(
+                self.client, file, message.chat.id, message.chat.type, **kwargs
+            )
         )
 
     async def send_location(
@@ -243,8 +313,10 @@ class BaleApp:
         **kwargs: Any,
     ) -> Message:
         """Share a map point."""
-        return await send_location(
-            self.client, latitude, longitude, chat_id, chat_type, **kwargs
+        return self._remember_sent(
+            await send_location(
+                self.client, latitude, longitude, chat_id, chat_type, **kwargs
+            )
         )
 
     async def send_contact(
@@ -256,8 +328,8 @@ class BaleApp:
         **kwargs: Any,
     ) -> Message:
         """Share a contact card."""
-        return await send_contact(
-            self.client, name, phones, chat_id, chat_type, **kwargs
+        return self._remember_sent(
+            await send_contact(self.client, name, phones, chat_id, chat_type, **kwargs)
         )
 
     async def send_sticker(
@@ -268,43 +340,91 @@ class BaleApp:
         **kwargs: Any,
     ) -> Message:
         """Send a sticker taken from a received message or `StickerInfo`."""
-        return await send_sticker(self.client, sticker, chat_id, chat_type, **kwargs)
+        return self._remember_sent(
+            await send_sticker(self.client, sticker, chat_id, chat_type, **kwargs)
+        )
 
     async def reply_location(
         self, message: Message, latitude: float, longitude: float, **kwargs: Any
     ) -> Message:
         """Share a map point back into the chat a message came from."""
-        return await send_location(
-            self.client,
-            latitude,
-            longitude,
-            message.chat.id,
-            message.chat.type,
-            **kwargs,
+        return self._remember_sent(
+            await send_location(
+                self.client,
+                latitude,
+                longitude,
+                message.chat.id,
+                message.chat.type,
+                **kwargs,
+            )
         )
 
     async def reply_contact(
         self, message: Message, name: str, phones: Iterable[str], **kwargs: Any
     ) -> Message:
         """Share a contact card back into the chat a message came from."""
-        return await send_contact(
-            self.client, name, phones, message.chat.id, message.chat.type, **kwargs
+        return self._remember_sent(
+            await send_contact(
+                self.client, name, phones, message.chat.id, message.chat.type, **kwargs
+            )
         )
 
     async def reply_sticker(
         self, message: Message, sticker: Any, **kwargs: Any
     ) -> Message:
         """Send a sticker back into the chat a message came from."""
-        return await send_sticker(
-            self.client, sticker, message.chat.id, message.chat.type, **kwargs
+        return self._remember_sent(
+            await send_sticker(
+                self.client, sticker, message.chat.id, message.chat.type, **kwargs
+            )
         )
 
     async def reply_content(
         self, message: Message, content: Any, **kwargs: Any
     ) -> Message:
         """Send any raw `MessageContent` back into a message's chat."""
-        return await send_content(
-            self.client, content, message.chat.id, message.chat.type, **kwargs
+        return self._remember_sent(
+            await send_content(
+                self.client, content, message.chat.id, message.chat.type, **kwargs
+            )
+        )
+
+    async def send_text(
+        self,
+        text: str,
+        chat_id: int,
+        chat_type: ChatType = ChatType.PRIVATE,
+        **kwargs: Any,
+    ) -> Message:
+        """Send a plain text message.
+
+        `client.send_message` and `message.answer()` do the same thing, but
+        neither records the id — so a reply sent that way comes back through
+        `on_message_sent` looking like the owner typing. Prefer this.
+        """
+        return self._remember_sent(
+            await self.client.send_message(text, chat_id, chat_type, **kwargs)
+        )
+
+    async def reply_text(self, message: Message, text: str, **kwargs: Any) -> Message:
+        """Send a plain text message back into the chat a message came from."""
+        return await self.send_text(
+            text, message.chat.id, message.chat.type, **kwargs
+        )
+
+    async def seen(
+        self,
+        chat_id: int,
+        chat_type: ChatType = ChatType.PRIVATE,
+        **kwargs: Any,
+    ) -> Any:
+        """Mark a chat as read — works in bot chats and channels too."""
+        return await mark_seen(self.client, chat_id, chat_type, **kwargs)
+
+    async def seen_message(self, message: Message, **kwargs: Any) -> Any:
+        """Mark the chat a message came from as read."""
+        return await mark_seen(
+            self.client, message.chat.id, message.chat.type, **kwargs
         )
 
     async def react(self, message: Message, emoji: str, **kwargs: Any) -> Any:
@@ -555,11 +675,6 @@ class BaleApp:
                 f"no Bale session at {self.config.session_file}. "
                 "Run `python -m bale_userbot login` once to authenticate."
             )
-        # Only when nobody configured logging yet. The CLI routes logs to
-        # stderr before starting, and an MCP server must keep stdout for the
-        # protocol; forcing stdout here used to clobber both.
-        if not logging.getLogger().handlers:
-            setup_logging(self.config.log_level)
         await self.client.start(run_in_background=background)
 
     async def stop(self) -> None:
@@ -570,8 +685,18 @@ class BaleApp:
             self._store = None
 
     def run(self) -> None:
-        """Start and block until the process is stopped."""
+        """Start and block until the process is stopped.
+
+        This is the "I own the process" entry point, so it is also where
+        logging gets configured — `setup_logging` calls `basicConfig(force=True)`,
+        which tears down every root handler and would clobber the configuration
+        of a host that embeds `start()` instead. A host owns its own logging;
+        only a process that is nothing but this app gets to set it.
+        """
         import asyncio
+
+        if not logging.getLogger().handlers:
+            setup_logging(self.config.log_level)
 
         async def main() -> None:
             try:
