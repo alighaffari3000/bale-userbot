@@ -408,9 +408,7 @@ class BaleApp:
 
     async def reply_text(self, message: Message, text: str, **kwargs: Any) -> Message:
         """Send a plain text message back into the chat a message came from."""
-        return await self.send_text(
-            text, message.chat.id, message.chat.type, **kwargs
-        )
+        return await self.send_text(text, message.chat.id, message.chat.type, **kwargs)
 
     async def seen(
         self,

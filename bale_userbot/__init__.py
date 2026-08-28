@@ -2,7 +2,7 @@
 
 Gives you: one login/session story, an event-driven app runner with reconnect,
 one vocabulary for every message kind, and one way to send or download any
-attachment. It adds no product behaviour of its own — what a message *means*
+attachment. It adds no product behaviour of its own â€” what a message *means*
 is your application's business.
 """
 
@@ -58,6 +58,7 @@ from .groups import (  # noqa: E402
     list_groups,
     load_admins,
     load_members,
+    load_user_profiles,
     member_count,
     member_info,
     member_records,
@@ -192,6 +193,7 @@ __all__ = (
     "load_admins",
     "load_history",
     "load_members",
+    "load_user_profiles",
     "location_content",
     "member_count",
     "member_info",

@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 from baleclient.enums import ChatType
 
 from .content import describe
+from .groups import load_user_profiles
 from .history import TimeLike, load_history, to_timestamp
 from .limiter import RateLimiter
 from .store import MessageStore
@@ -54,6 +55,8 @@ class SyncReport:
     title: str | None = None
     fetched: int = 0
     stored: int = 0
+    #: New senders named during this sync — cosmetic, never a failure cause.
+    users: int = 0
     oldest_date: int | None = None
     newest_date: int | None = None
     incremental: bool = False
@@ -69,6 +72,7 @@ class SyncReport:
             "title": self.title,
             "fetched": self.fetched,
             "stored": self.stored,
+            "users": self.users,
             "oldest_date": self.oldest_date,
             "newest_date": self.newest_date,
             "incremental": self.incremental,
@@ -162,6 +166,7 @@ async def sync_chat(
     infos = [describe(message) for message in messages]
     report.fetched = len(infos)
     report.stored = store.put_messages(infos)
+    report.users = await _resolve_new_senders(app, store, infos, limiter)
     if title:
         store.put_chat(chat_id, title=title)
     else:
@@ -177,6 +182,50 @@ async def sync_chat(
         " (incremental)" if report.incremental else "",
     )
     return report
+
+
+async def _resolve_new_senders(
+    app: BaleApp,
+    store: MessageStore,
+    infos: Sequence[Any],
+    limiter: RateLimiter,
+) -> int:
+    """Look up the senders this page introduced. Returns how many were named.
+
+    Sync is where the network already is, so this is where a sender id turns
+    into a name — search stays offline and still reads like people, not
+    numbers. Only *unknown* senders are asked about, so a busy group costs
+    one request on the first sweep and none on the next.
+
+    Cosmetic by nature: a failure here must not fail a sync that already
+    stored its messages.
+    """
+    senders = {info.sender_id for info in infos if info.sender_id}
+    unknown = sorted(senders - store.known_user_ids())
+    if not unknown:
+        return 0
+
+    try:
+        profiles = await limiter.run(
+            lambda: load_user_profiles(app.client, unknown),
+            what=f"users({len(unknown)})",
+        )
+    except Exception as exc:
+        logger.debug("sender lookup failed (%s); ids stay unnamed", type(exc).__name__)
+        return 0
+
+    # Ids the server would not describe are recorded as nameless rather than
+    # left out: without that, every later sweep asks about them again.
+    rows = [
+        (
+            user_id,
+            getattr(profiles.get(user_id), "name", None),
+            getattr(profiles.get(user_id), "username", None),
+        )
+        for user_id in unknown
+    ]
+    store.put_users(rows)
+    return sum(1 for _, name, _ in rows if name)
 
 
 async def _remember_title(

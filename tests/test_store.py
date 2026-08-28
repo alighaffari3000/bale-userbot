@@ -191,3 +191,42 @@ def test_put_chat_updates_what_it_is_given(store):
 def test_chat_usernames_skips_private_chats(store):
     store.put_chat(557, title="Private group")  # no username
     assert 557 not in store.chat_usernames()
+
+
+# -- sender profiles: ids become people -------------------------------------
+
+
+def test_put_and_read_user_profiles(store):
+    store.put_users([(11, "علی غفاری", "alig"), (12, "بدون یوزرنیم", None)])
+    profiles = store.user_profiles()
+    assert profiles[11] == {"name": "علی غفاری", "username": "alig"}
+    assert profiles[12]["username"] is None
+    assert store.known_user_ids() == {11, 12}
+
+
+def test_user_profiles_filters_by_id(store):
+    store.put_users([(11, "A", None), (12, "B", None)])
+    assert set(store.user_profiles([12])) == {12}
+    assert store.user_profiles([]) == {}
+
+
+def test_put_users_updates_a_renamed_sender(store):
+    store.put_users([(11, "Old", "old")])
+    store.put_users([(11, "New", "new")])
+    assert store.user_profiles()[11] == {"name": "New", "username": "new"}
+
+
+def test_unresolved_senders_lists_only_unknown_ones(store):
+    put(store, "اول", message_id=1, sender_id=11)
+    put(store, "دوم", message_id=2, sender_id=12)
+    assert set(store.unresolved_senders()) == {11, 12}
+    store.put_users([(11, "علی", "alig")])
+    assert store.unresolved_senders() == [12]
+
+
+def test_a_nameless_record_stops_the_re_asking(store):
+    # A deleted account the server will not describe is stored nameless, so
+    # every later sweep does not ask about it again.
+    put(store, "از حساب حذف‌شده", message_id=3, sender_id=13)
+    store.put_users([(13, None, None)])
+    assert store.unresolved_senders() == []

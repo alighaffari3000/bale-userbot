@@ -381,6 +381,41 @@ async def iter_members(
         logger.warning("group %s: stopped after %s member pages", chat_id, MAX_PAGES)
 
 
+async def load_user_profiles(
+    client: Client,
+    user_ids: Sequence[int],
+    *,
+    chunk: int = PROFILE_CHUNK,
+) -> dict[int, User]:
+    """Resolve bare user ids to profiles, in chunks.
+
+    The same `LoadUsers` walk `hydrate_profiles` does, but keyed by id and
+    free of `MemberInfo` — a message's sender is not necessarily a member of
+    any group you can list, and often is not.
+
+    Ids the server declines to describe (deleted accounts) are simply absent
+    from the result; callers should treat a miss as "not knowable", not as an
+    error, and are free to record that so they stop re-asking.
+    """
+    if chunk < 1:
+        raise ValueError("chunk must be at least 1")
+
+    ids = list(dict.fromkeys(user_ids))
+    profiles: dict[int, User] = {}
+    for start in range(0, len(ids), chunk):
+        peers = [
+            InfoPeer(id=user_id, type=ChatType.PRIVATE)
+            for user_id in ids[start : start + chunk]
+        ]
+        for user in await client.load_users(peers):
+            profiles[user.id] = user
+
+    missing = len(ids) - len(profiles)
+    if missing:
+        logger.debug("no profile returned for %s of %s users", missing, len(ids))
+    return profiles
+
+
 async def hydrate_profiles(
     client: Client,
     members: Sequence[MemberInfo],

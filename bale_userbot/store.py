@@ -81,6 +81,13 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS messages_by_date ON messages (chat_id, date);
 CREATE INDEX IF NOT EXISTS messages_by_sender ON messages (sender_id);
 
+CREATE TABLE IF NOT EXISTS users (
+    user_id    INTEGER PRIMARY KEY,
+    name       TEXT,
+    username   TEXT,
+    updated_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sync_state (
     chat_id     INTEGER PRIMARY KEY,
     oldest_date INTEGER,
@@ -287,6 +294,65 @@ class MessageStore:
             (chat_id, title, username, is_channel, members_count, int(time.time())),
         )
         self.connection.commit()
+
+    def put_users(self, users: Iterable[tuple[int, str | None, str | None]]) -> int:
+        """Remember who a sender id is: (user_id, name, username) rows.
+
+        A sender id in a search result is unusable on its own — nobody calls
+        a number. Resolving costs a request per fifty users, so it is done
+        once, during sync, and read back offline forever after.
+        """
+        rows = [
+            (uid, name, username, int(time.time())) for uid, name, username in users
+        ]
+        if not rows:
+            return 0
+        self.connection.executemany(
+            """
+            INSERT INTO users (user_id, name, username, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                name = excluded.name,
+                username = excluded.username,
+                updated_at = excluded.updated_at
+            """,
+            rows,
+        )
+        self.connection.commit()
+        return len(rows)
+
+    def known_user_ids(self) -> set[int]:
+        """Users already resolved — what a sync does *not* need to ask about."""
+        rows = self.connection.execute("SELECT user_id FROM users").fetchall()
+        return {row["user_id"] for row in rows}
+
+    def unresolved_senders(self, chat_id: int | None = None) -> list[int]:
+        """Sender ids that appear in messages but have no profile yet."""
+        sql = (
+            "SELECT DISTINCT m.sender_id FROM messages m "
+            "LEFT JOIN users u ON u.user_id = m.sender_id "
+            "WHERE m.sender_id IS NOT NULL AND u.user_id IS NULL"
+        )
+        params: tuple[Any, ...] = ()
+        if chat_id is not None:
+            sql += " AND m.chat_id = ?"
+            params = (chat_id,)
+        return [row[0] for row in self.connection.execute(sql, params).fetchall()]
+
+    def user_profiles(self, user_ids: Sequence[int] | None = None) -> dict[int, dict]:
+        """Known senders as {user_id: {"name": ..., "username": ...}}."""
+        sql = "SELECT user_id, name, username FROM users"
+        params: tuple[Any, ...] = ()
+        if user_ids is not None:
+            if not user_ids:
+                return {}
+            marks = ",".join("?" for _ in user_ids)
+            sql += f" WHERE user_id IN ({marks})"
+            params = tuple(user_ids)
+        return {
+            row["user_id"]: {"name": row["name"], "username": row["username"]}
+            for row in self.connection.execute(sql, params).fetchall()
+        }
 
     def chat_usernames(self) -> dict[int, str]:
         """Public usernames by chat id — the raw material for chat links.
