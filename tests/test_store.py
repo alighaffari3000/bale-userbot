@@ -154,3 +154,40 @@ def test_messages_without_text_are_never_matched(store):
 def test_normalize_is_idempotent():
     once = normalize("پنل ۴۵۰ کیلو‌وات")
     assert normalize(once) == once
+
+
+# -- put_chat merges instead of wiping --------------------------------------
+#
+# The sweep writes full chat rows (title + username + channel flag); right
+# after it, sync_chat records the title alone. Before the merge fix that
+# second call nulled the username and channel flag of all 32 chats, every
+# sweep -- found when message links needed the usernames.
+
+
+def test_title_only_put_keeps_username_and_channel_flag(store):
+    store.put_chat(555, title="HURACO", username="huraco1", is_channel=True)
+    store.put_chat(555, title="HURACO")  # what sync_chat does
+    names = store.chat_usernames()
+    assert names[555] == "huraco1"
+    row = store.connection.execute(
+        "SELECT is_channel, members_count FROM chats WHERE chat_id=555"
+    ).fetchone()
+    assert row["is_channel"] == 1
+
+
+def test_put_chat_updates_what_it_is_given(store):
+    store.put_chat(556, title="Old", username="oldname", members_count=10)
+    store.put_chat(556, title="New", members_count=12)
+    row = store.connection.execute(
+        "SELECT title, username, members_count FROM chats WHERE chat_id=556"
+    ).fetchone()
+    assert (row["title"], row["username"], row["members_count"]) == (
+        "New",
+        "oldname",
+        12,
+    )
+
+
+def test_chat_usernames_skips_private_chats(store):
+    store.put_chat(557, title="Private group")  # no username
+    assert 557 not in store.chat_usernames()

@@ -250,32 +250,55 @@ class MessageStore:
         *,
         title: str | None = None,
         username: str | None = None,
-        is_channel: bool = False,
+        is_channel: bool | None = None,
         members_count: int | None = None,
     ) -> None:
-        """Remember a chat's name so search results can be read without ids."""
+        """Remember a chat's name so search results can be read without ids.
+
+        Merge semantics: a field the caller does not supply keeps its stored
+        value. Without that, `sync_chat`'s title-only call was wiping the
+        username and channel flag that the sweep's full `put_chat` had just
+        written — every sweep left the table nameless again, discovered when
+        message links needed the usernames and found all 32 of them NULL.
+        """
+        # Merged in Python rather than with COALESCE in the upsert: the
+        # is_channel column is NOT NULL, so "no value supplied" cannot be
+        # expressed as an inserted NULL. One writer process; no race to lose.
+        row = self.connection.execute(
+            "SELECT title, username, is_channel, members_count "
+            "FROM chats WHERE chat_id = ?",
+            (chat_id,),
+        ).fetchone()
+        if row is not None:
+            title = title if title is not None else row["title"]
+            username = username if username is not None else row["username"]
+            is_channel = row["is_channel"] if is_channel is None else int(is_channel)
+            members_count = (
+                members_count if members_count is not None else row["members_count"]
+            )
+        else:
+            is_channel = int(bool(is_channel))
         self.connection.execute(
             """
-            INSERT INTO chats (chat_id, title, username, is_channel,
-                               members_count, updated_at)
+            INSERT OR REPLACE INTO chats (chat_id, title, username, is_channel,
+                                          members_count, updated_at)
             VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(chat_id) DO UPDATE SET
-                title = excluded.title,
-                username = excluded.username,
-                is_channel = excluded.is_channel,
-                members_count = excluded.members_count,
-                updated_at = excluded.updated_at
             """,
-            (
-                chat_id,
-                title,
-                username,
-                int(is_channel),
-                members_count,
-                int(time.time()),
-            ),
+            (chat_id, title, username, is_channel, members_count, int(time.time())),
         )
         self.connection.commit()
+
+    def chat_usernames(self) -> dict[int, str]:
+        """Public usernames by chat id — the raw material for chat links.
+
+        Only chats that actually have one appear; a private group has no
+        public address and callers should not have to filter Nones.
+        """
+        rows = self.connection.execute(
+            "SELECT chat_id, username FROM chats "
+            "WHERE username IS NOT NULL AND username != ''"
+        ).fetchall()
+        return {row["chat_id"]: row["username"] for row in rows}
 
     def put_messages(self, messages: Iterable[MessageInfo]) -> int:
         """Insert or refresh messages. Returns how many rows were written.
