@@ -303,7 +303,11 @@ async def mark_seen(
     whole chat is marked read, which is what answering a message means.
     """
     peer = client._resolve_peer(client._build_chat(chat_id, chat_type))
-    call = MessageRead(peer=peer, date=date) if date is not None else MessageRead(peer=peer)
+    call = (
+        MessageRead(peer=peer, date=date)
+        if date is not None
+        else MessageRead(peer=peer)
+    )
     return await client(call)
 
 
