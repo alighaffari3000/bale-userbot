@@ -65,6 +65,7 @@ from .groups import (  # noqa: E402
     permission_names,
     watch_membership,
 )
+from .guard import GuardedSession, SessionRejected  # noqa: E402
 from .history import (  # noqa: E402
     day_range,
     export_history,
@@ -140,6 +141,7 @@ __all__ = (
     "FromUsers",
     "GroupInfo",
     "GroupUnavailableError",
+    "GuardedSession",
     "InChats",
     "InviteLink",
     "IsMedia",
@@ -160,6 +162,7 @@ __all__ = (
     "SearchHit",
     "SearchResult",
     "SessionMissingError",
+    "SessionRejected",
     "StickerImage",
     "StickerInfo",
     "SweepReport",
