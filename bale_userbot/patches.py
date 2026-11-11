@@ -42,6 +42,15 @@ by hitting it on a live account:
   a document missing required fields) fails `PeerData` validation and takes
   the whole `LoadDialogs` page with it, silently truncating the chat list.
 
+One repair is not a validator but the decoder itself: `ProtoBuf._fix_fields`
+hands every element of a repeated field its *parent's* raw bytes, so each
+element re-parses the parent and re-runs `_is_valid_text` over the parent's
+first entry. A page costs (elements in the tree) x (size of its first
+message), all pure Python inside the websocket reader — nothing awaits, so the
+whole event loop stops. A history page from a photo-heavy group froze a bot
+for 33 hours this way. `_memoized_fix_fields` returns exactly the same result
+but parses each buffer and judges each candidate text once per decode.
+
 Swapping the function inside `__pydantic_decorators__` and forcing a schema
 rebuild is the only way in: pydantic compiled the original into the model's
 core schema at class-creation time. Models that embed `MessageContent` are
@@ -330,11 +339,104 @@ def _make_lenient_dialogs(cls: type):
     return _lenient
 
 
+#: Marks a buffer `_parse_protobuf_fields` could not read, in the memo.
+_UNPARSEABLE = object()
+
+
+def _memoized_fix_fields(
+    self: Any,
+    data: Any,
+    raw_message_bytes: bytes,
+    _memo: tuple[dict, dict] | None = None,
+) -> Any:
+    """`ProtoBuf._fix_fields` with the same output, minus the repeated work.
+
+    The original walks repeated fields with the parent's bytes (see the module
+    docstring), so the same buffer is parsed, and the same candidate text
+    judged, once per element. Both are pure functions of their bytes, so one
+    decode keeps them in `_memo`: buffer -> (first wire-type-2 payload per
+    field number, or `_UNPARSEABLE` with its error), and payload -> fixed text
+    or None. Which bytes each node is checked against is deliberately left
+    unchanged — the other repairs here were verified against that output.
+    """
+    from baleclient.utils.protobuf import _is_valid_text, _parse_protobuf_fields
+
+    if _memo is None:
+        _memo = ({}, {})
+        # The memo is keyed by buffer; a bytearray (allowed by clean_grpc)
+        # is unhashable. Its slices decode to the same text, so this is safe.
+        if not isinstance(raw_message_bytes, bytes):
+            raw_message_bytes = bytes(raw_message_bytes)
+    buffers, texts = _memo
+
+    if isinstance(data, dict):
+        parsed = buffers.get(raw_message_bytes)
+        if parsed is None:
+            try:
+                entries = _parse_protobuf_fields(raw_message_bytes)
+            except Exception as exc:
+                parsed = (_UNPARSEABLE, exc)
+            else:
+                first: dict[int, bytes] = {}
+                for field_no, wire_type, payload in entries:
+                    if wire_type == 2 and field_no not in first:
+                        first[field_no] = payload
+                parsed = (first, bool(entries))
+            buffers[raw_message_bytes] = parsed
+        if parsed[0] is _UNPARSEABLE:
+            print(parsed[1])  # as the original does, once per failed node
+            return data
+        first, has_entries = parsed
+
+        new_data: dict[str, Any] = {}
+        for key, value in data.items():
+            # The original computes int(key) only while scanning entries, so
+            # a non-numeric key raises only when there are entries to scan.
+            rb = first.get(int(key.split("-")[0])) if has_entries else None
+
+            fixed: str | None = None
+            if rb is not None:
+                if rb in texts:
+                    fixed = texts[rb]
+                else:
+                    try:
+                        text = rb.decode("utf-8")
+                    except UnicodeDecodeError:
+                        text = rb.decode("latin-1", errors="ignore")
+                    fixed = text if _is_valid_text(text) else None
+                    texts[rb] = fixed
+
+            if fixed is not None:
+                new_data[key] = fixed
+            elif isinstance(value, dict) and rb is not None:
+                new_data[key] = _memoized_fix_fields(self, value, rb, _memo)
+            elif isinstance(value, list):
+                new_data[key] = [
+                    _memoized_fix_fields(self, v, raw_message_bytes, _memo)
+                    for v in value
+                ]
+            else:
+                new_data[key] = value
+        return new_data
+
+    if isinstance(data, list):
+        return [
+            _memoized_fix_fields(self, item, raw_message_bytes, _memo) for item in data
+        ]
+
+    return data
+
+
 def apply_wire_fixes() -> None:
     """Install the fixed validator. Idempotent; call before any parsing."""
     global _APPLIED
     if _APPLIED:
         return
+
+    # -- ProtoBuf decoder: repeated work that grows with the page ----------
+    from baleclient.utils.protobuf import ProtoBuf
+
+    ProtoBuf._fix_fields = _memoized_fix_fields
 
     validators = MessageContent.__pydantic_decorators__.model_validators
     validators["_check_empty"].func = MethodType(_fixed_check_empty, MessageContent)
